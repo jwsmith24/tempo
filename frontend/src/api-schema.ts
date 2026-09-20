@@ -330,6 +330,8 @@ export interface components {
         LinkChange: {
             /** Planned Session Id */
             planned_session_id: string;
+            /** Expected Version */
+            expected_version: number;
         };
         /** LinkEvidenceRead */
         LinkEvidenceRead: {
@@ -361,11 +363,18 @@ export interface components {
             algorithm_version: string | null;
             /** Reasons */
             reasons: string[];
+            /** Version */
+            version: number;
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
+        };
+        /** LinkRemove */
+        LinkRemove: {
+            /** Expected Version */
+            expected_version: number;
         };
         /** ManualActivityCreate */
         ManualActivityCreate: {
@@ -853,7 +862,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkRemove"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             204: {

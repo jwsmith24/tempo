@@ -15,7 +15,7 @@ test("records and revisits unmatched manual training evidence", async ({ page })
   await tabTo(page, page.getByLabel("Modality"));
   await page.keyboard.press("ArrowDown");
   await tabTo(page, page.getByLabel("Local start"));
-  await page.getByLabel("Local start").fill("2026-09-20T06:30");
+  await page.getByLabel("Local start").fill("2027-09-20T06:30");
   await tabTo(page, page.getByLabel("UTC offset"));
   await page.keyboard.press("Meta+A");
   await page.keyboard.type("+05:30");
@@ -34,7 +34,7 @@ test("records and revisits unmatched manual training evidence", async ({ page })
   await expect(page.getByRole("status")).toContainText("Matching evaluated");
   await expect(page.getByText("Unmatched", { exact: true })).toBeVisible();
   await expect(page.getByText("Source: manual / Created by athlete entry")).toBeVisible();
-  await expect(page.getByText("2026-09-20T06:30:00+05:30")).toBeVisible();
+  await expect(page.getByText("2027-09-20T06:30:00+05:30")).toBeVisible();
   await expect(page).toHaveURL(/\/activities\/[a-f0-9-]+$/);
 
   await page.reload();

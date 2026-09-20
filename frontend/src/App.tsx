@@ -277,7 +277,7 @@ export function App() {
     const response = await fetch(`/api/activities/${activity.id}/linking/link`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ planned_session_id: String(form.get("planned_session_id")) }),
+      body: JSON.stringify({ planned_session_id: String(form.get("planned_session_id")), expected_version: activityLinking?.link?.link.version }),
     });
     if (!response.ok) {
       const result = (await response.json()) as { detail?: unknown };
@@ -291,7 +291,11 @@ export function App() {
 
   async function removeDirectLink() {
     if (!activity) return;
-    const response = await fetch(`/api/activities/${activity.id}/linking/link`, { method: "DELETE" });
+    const response = await fetch(`/api/activities/${activity.id}/linking/link`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expected_version: activityLinking?.link?.link.version }),
+    });
     if (!response.ok) {
       const result = (await response.json()) as { detail?: string };
       setStatus(result.detail || "Link could not be removed.");
@@ -336,8 +340,10 @@ export function App() {
         <h1>{activity ? "Completed Activity" : currentRoute === "activity-list" ? "Observed work." : currentRoute === "activity-new" ? "Record what happened." : currentRoute === "activity-import" ? "Import observed work." : run ? "Planned Run" : "Set the intention."}</h1>
         <p className="lede">
           {activity
-            ? activity.link_status !== "unmatched"
-              ? "This observed training evidence has an explicit confirmed Link; any remaining evidence stays visible."
+            ? activity.link_status === "linked"
+              ? "This observed training evidence has one explicit whole-activity Link."
+              : activity.link_status === "legacy_unresolved"
+                ? "Prior relationships are preserved and await your explicit resolution; no current Link has been chosen."
               : "This is observed training evidence. It remains unmatched until you explicitly link it later."
             : currentRoute === "activity-list"
               ? "Manual training evidence remains legitimate whether or not it matches a Planned Session."
@@ -626,6 +632,12 @@ function RunDetail({
     {evidence && evidence.links.length > 0 && (
       <section className="linking-panel confirmed-panel" aria-label="Confirmed Links">
         <div className="section-heading"><div><span className="revision">Confirmed Links</span><h2>Planned versus actual</h2></div></div>
+        <dl className="evidence-card" aria-label="Complete actual totals">
+          <div><dt>Total actual duration</dt><dd>{formatDuration(evidence.total_duration_seconds)}</dd></div>
+          <div><dt>Total actual distance</dt><dd>{evidence.total_distance_metres === null ? "Not comparable: distance missing" : `${evidence.total_distance_metres / 1000} km`}</dd></div>
+          <div><dt>Duration difference</dt><dd>{formatDifference(evidence.duration_difference_seconds, "seconds")}</dd></div>
+          <div><dt>Distance difference</dt><dd>{formatDifference(evidence.distance_difference_metres, "metres")}</dd></div>
+        </dl>
         {evidence.links.map((item) => (
           <article className="evidence-card" key={item.link.id}>
             <h3>{item.activity.title || "Running activity"}</h3>
@@ -633,8 +645,6 @@ function RunDetail({
                <div><dt>Actual duration</dt><dd>{formatDuration(item.activity.duration_seconds)}</dd></div>
                <div><dt>Actual distance</dt><dd>{item.activity.distance_metres === null ? "Not recorded" : `${item.activity.distance_metres / 1000} km`}</dd></div>
               <div><dt>Link source</dt><dd>{item.link.source.replace("_", " ")}</dd></div>
-              <div><dt>Duration difference</dt><dd>{formatDifference(evidence.duration_difference_seconds, "seconds")}</dd></div>
-              <div><dt>Distance difference</dt><dd>{formatDifference(evidence.distance_difference_metres, "metres")}</dd></div>
             </dl>
             <div className="notes"><span className="label">Source provenance</span><p>{item.activity.import_provenance ? `${item.activity.import_provenance.adapter_type} / ${item.activity.import_provenance.importer_name} ${item.activity.import_provenance.importer_version} / imported ${item.activity.import_provenance.imported_at} / raw source ${item.activity.import_provenance.raw_file_identity}` : "Manual athlete entry; no imported raw source."}</p></div>
           </article>

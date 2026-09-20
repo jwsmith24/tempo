@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from tempo.activities.models import CompletedActivity
-from tempo.linking.models import LegacyLinkResolution, Link
+from tempo.linking.models import LegacyLinkResolution, Link, LinkDecision, MatchEvaluation
 from tempo.planning.models import PlannedSession
 
 ALGORITHM_VERSION = "stage1-date-noon-v2"
@@ -112,6 +112,20 @@ def _new_link(
 
 def evaluate_after_ingestion(session: Session, activity: CompletedActivity) -> Link | None:
     candidates = list_candidates(session, activity)
+    session.add(
+        MatchEvaluation(
+            completed_activity_id=activity.id,
+            activity_effective_version=activity.created_at.astimezone(UTC).isoformat(),
+            algorithm_version=ALGORITHM_VERSION,
+            candidate_results=json.dumps(
+                [
+                    {"planned_session_id": planned_session.id, "reasons": reasons}
+                    for planned_session, reasons in candidates
+                ]
+            ),
+            evaluated_at=datetime.now(UTC),
+        )
+    )
     if len(candidates) != 1:
         return None
     planned_session, reasons = candidates[0]
@@ -154,14 +168,51 @@ def create_direct_link(
     )
 
 
-def change_link(session: Session, link: Link, planned_session: PlannedSession) -> Link:
+def change_link(
+    session: Session, link: Link, planned_session: PlannedSession, expected_version: int
+) -> Link:
+    if link.version != expected_version:
+        raise LinkConflict("This Link changed since it was loaded. Reload and try again.")
+    session.add(
+        LinkDecision(
+            completed_activity_id=link.completed_activity_id,
+            link_id=link.id,
+            action="changed",
+            prior_planned_session_id=link.planned_session_id,
+            planned_session_id=planned_session.id,
+            prior_source=link.source,
+            prior_algorithm_version=link.algorithm_version,
+            prior_reasons=link.reasons,
+            decided_at=datetime.now(UTC),
+        )
+    )
     link.planned_session_id = planned_session.id
     link.source = "direct"
     link.algorithm_version = None
     link.reasons = "[]"
+    link.version += 1
     session.flush()
     return link
 
 
 def reasons_for(link: Link) -> list[str]:
     return json.loads(link.reasons or "[]")
+
+
+def remove_link(session: Session, link: Link, expected_version: int) -> None:
+    if link.version != expected_version:
+        raise LinkConflict("This Link changed since it was loaded. Reload and try again.")
+    session.add(
+        LinkDecision(
+            completed_activity_id=link.completed_activity_id,
+            link_id=link.id,
+            action="removed",
+            prior_planned_session_id=link.planned_session_id,
+            planned_session_id=None,
+            prior_source=link.source,
+            prior_algorithm_version=link.algorithm_version,
+            prior_reasons=link.reasons,
+            decided_at=datetime.now(UTC),
+        )
+    )
+    session.delete(link)

@@ -20,6 +20,7 @@ from tempo.linking.schemas import (
     LinkChange,
     LinkEvidenceRead,
     LinkRead,
+    LinkRemove,
     MatchCandidateRead,
 )
 from tempo.linking.service import (
@@ -31,6 +32,7 @@ from tempo.linking.service import (
     list_candidates,
     load_planned_session,
     reasons_for,
+    remove_link,
 )
 from tempo.planning.models import PlannedSession
 
@@ -60,6 +62,7 @@ def link_read(link: Link) -> LinkRead:
         source=link.source,
         algorithm_version=link.algorithm_version,
         reasons=reasons_for(link),
+        version=link.version,
         created_at=link.created_at,
     )
 
@@ -183,22 +186,33 @@ def change_current_link(
     if link is None:
         raise HTTPException(status_code=404, detail="Link not found.")
     planned_session = require_plan(session, request.planned_session_id)
-    return link_read(mutate_link(session, lambda: change_link(session, link, planned_session)))
+    return link_read(
+        mutate_link(
+            session,
+            lambda: change_link(session, link, planned_session, request.expected_version),
+        )
+    )
 
 
 @activity_router.delete(
     "/{activity_id}/linking/link", status_code=status.HTTP_204_NO_CONTENT
 )
 def remove_current_link(
-    activity_id: str, session: Session = Depends(get_session)
+    activity_id: str,
+    request: LinkRemove,
+    session: Session = Depends(get_session),
 ) -> None:
     session.connection().exec_driver_sql("BEGIN IMMEDIATE")
     require_activity(session, activity_id)
     link = session.scalar(select(Link).where(Link.completed_activity_id == activity_id))
     if link is None:
         raise HTTPException(status_code=404, detail="Link not found.")
-    session.delete(link)
-    session.commit()
+    try:
+        remove_link(session, link, request.expected_version)
+        session.commit()
+    except LinkConflict as error:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @activity_router.post(

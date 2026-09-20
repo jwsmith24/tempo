@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { execFileSync } from "node:child_process";
 
 async function createRun(page: import("@playwright/test").Page, day: string) {
   await page.goto("/");
@@ -34,10 +35,11 @@ test("automatically links the only eligible plan using complete evidence", async
 
   await page.goto(runUrl);
   const evidence = page.getByRole("region", { name: "Confirmed Links" });
-  await expect(evidence.getByText("55 min")).toBeVisible();
-  await expect(evidence.getByText("9 km")).toBeVisible();
-  await expect(evidence.getByText("5 min under prescription")).toBeVisible();
-  await expect(evidence.getByText("1 km under prescription")).toBeVisible();
+  const totals = evidence.getByRole("definition").filter({ hasText: "55 min" });
+  await expect(totals.first()).toBeVisible();
+  await expect(evidence.getByLabel("Complete actual totals").getByText("9 km")).toBeVisible();
+  await expect(evidence.getByLabel("Complete actual totals").getByText("5 min under prescription")).toBeVisible();
+  await expect(evidence.getByLabel("Complete actual totals").getByText("1 km under prescription")).toBeVisible();
 });
 
 test("requires explicit selection for multiple candidates", async ({ page }) => {
@@ -79,4 +81,34 @@ test("creates changes and removes a direct whole-activity Link", async ({ page }
   await expect(page.getByRole("status")).toContainText("Link removed");
   await expect(page.getByText("Unmatched", { exact: true })).toBeVisible();
   await expect(page.getByRole("form", { name: "Create direct Link" })).toBeVisible();
+});
+
+test("resolves preserved legacy Links without hiding their history", async ({ page }) => {
+  const firstUrl = await createRun(page, "2026-11-01");
+  const firstId = firstUrl.split("/").at(-1)!;
+  const secondUrl = await createRun(page, "2026-11-02");
+  const secondId = secondUrl.split("/").at(-1)!;
+  await createActivity(page, "2026-11-20", "Legacy combined recording");
+  const activityId = page.url().split("/").at(-1)!;
+  const database = "/tmp/tempo-playwright.db";
+  execFileSync("../.venv/bin/python", ["-c", `
+import sqlite3, uuid
+db, activity, first, second = ${JSON.stringify(database)}, ${JSON.stringify(activityId)}, ${JSON.stringify(firstId)}, ${JSON.stringify(secondId)}
+with sqlite3.connect(db) as connection:
+    resolution = str(uuid.uuid4())
+    connection.execute("INSERT INTO legacy_link_resolutions (id, completed_activity_id, status) VALUES (?, ?, 'unresolved')", (resolution, activity))
+    for plan, duration, distance in ((first, 1200, 3000), (second, 1800, 4000)):
+        connection.execute("INSERT INTO legacy_link_records VALUES (?, ?, ?, ?, ?, ?, 'direct', 1, '2026-09-20T01:00:00Z')", (str(uuid.uuid4()), resolution, plan, activity, duration, distance))
+`]);
+  await page.reload();
+
+  const legacy = page.getByRole("region", { name: "Unresolved legacy Links" });
+  await expect(page.getByText("Legacy Links need resolution", { exact: true })).toBeVisible();
+  await expect(legacy.getByText("Preserved: 20 min / 3 km")).toBeVisible();
+  await expect(legacy.getByText("Preserved: 30 min / 4 km")).toBeVisible();
+  await legacy.getByText("Aerobic base on 2026-11-02").locator("..").getByRole("button", { name: "Use this Planned Run" }).press("Enter");
+  await expect(page.getByRole("status")).toContainText("Preserved relationships remain in history");
+  await expect(page.getByRole("form", { name: "Change current Link" }).locator("strong")).toHaveText("Aerobic base on 2026-11-02");
+  await page.reload();
+  await expect(page.getByText("Linked", { exact: true })).toBeVisible();
 });

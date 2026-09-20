@@ -11,6 +11,9 @@ class Link(Base):
     __tablename__ = "links"
     __table_args__ = (
         CheckConstraint("source IN ('automatic', 'athlete_confirmed', 'direct')", name="ck_link_source"),
+        CheckConstraint("version > 0", name="ck_link_version"),
+        CheckConstraint("reasons IS NOT NULL", name="ck_link_reasons"),
+        CheckConstraint("source = 'direct' OR algorithm_version IS NOT NULL", name="ck_link_algorithm_provenance"),
         UniqueConstraint("completed_activity_id", name="uq_link_completed_activity"),
         Index("ix_link_planned_session", "planned_session_id"),
         Index("ix_link_completed_activity", "completed_activity_id"),
@@ -25,7 +28,8 @@ class Link(Base):
     )
     source: Mapped[str] = mapped_column(String(32))
     algorithm_version: Mapped[str | None] = mapped_column(String(64))
-    reasons: Mapped[str | None] = mapped_column(Text)
+    reasons: Mapped[str] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(UTCInstant())
 
 
@@ -66,6 +70,41 @@ class LegacyLinkRecord(Base):
     confirmation_source: Mapped[str] = mapped_column(String(32))
     version: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(UTCInstant())
+
+
+class MatchEvaluation(Base):
+    __tablename__ = "match_evaluations"
+    __table_args__ = (Index("ix_match_evaluation_activity", "completed_activity_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    completed_activity_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("completed_activities.id", ondelete="CASCADE")
+    )
+    activity_effective_version: Mapped[str] = mapped_column(String(64))
+    algorithm_version: Mapped[str] = mapped_column(String(64))
+    candidate_results: Mapped[str] = mapped_column(Text)
+    evaluated_at: Mapped[datetime] = mapped_column(UTCInstant())
+
+
+class LinkDecision(Base):
+    __tablename__ = "link_decisions"
+    __table_args__ = (
+        CheckConstraint("action IN ('changed', 'removed')", name="ck_link_decision_action"),
+        Index("ix_link_decision_activity", "completed_activity_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    completed_activity_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("completed_activities.id", ondelete="CASCADE")
+    )
+    link_id: Mapped[str] = mapped_column(String(36))
+    action: Mapped[str] = mapped_column(String(16))
+    prior_planned_session_id: Mapped[str | None] = mapped_column(String(36))
+    planned_session_id: Mapped[str | None] = mapped_column(String(36))
+    prior_source: Mapped[str | None] = mapped_column(String(32))
+    prior_algorithm_version: Mapped[str | None] = mapped_column(String(64))
+    prior_reasons: Mapped[str | None] = mapped_column(Text)
+    decided_at: Mapped[datetime] = mapped_column(UTCInstant())
 
 
 class SuggestionRejection(Base):

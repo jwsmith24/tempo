@@ -78,22 +78,26 @@ def upgrade() -> None:
         sa.Column("completed_activity_id", sa.String(36), nullable=False),
         sa.Column("source", sa.String(32), nullable=False),
         sa.Column("algorithm_version", sa.String(64), nullable=True),
-        sa.Column("reasons", sa.Text(), nullable=True),
+        sa.Column("reasons", sa.Text(), nullable=False),
+        sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
         sa.Column("created_at", sa.String(32), nullable=False),
         sa.ForeignKeyConstraint(["planned_session_id"], ["planned_sessions.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["completed_activity_id"], ["completed_activities.id"], ondelete="CASCADE"),
         sa.UniqueConstraint("completed_activity_id", name="uq_link_completed_activity"),
         sa.CheckConstraint("source IN ('automatic', 'athlete_confirmed', 'direct')", name="ck_link_source"),
+        sa.CheckConstraint("version > 0", name="ck_link_version"),
+        sa.CheckConstraint("reasons IS NOT NULL", name="ck_link_reasons"),
+        sa.CheckConstraint("source = 'direct' OR algorithm_version IS NOT NULL", name="ck_link_algorithm_provenance"),
     )
     op.create_index("ix_link_planned_session", "links", ["planned_session_id"])
     op.create_index("ix_link_completed_activity", "links", ["completed_activity_id"])
     connection.execute(sa.text("""
         INSERT INTO links (id, planned_session_id, completed_activity_id, source,
-                           algorithm_version, reasons, created_at)
+                           algorithm_version, reasons, version, created_at)
         SELECT id, planned_session_id, completed_activity_id,
                CASE confirmation_source WHEN 'suggestion' THEN 'athlete_confirmed' ELSE 'direct' END,
                CASE confirmation_source WHEN 'suggestion' THEN 'stage1-date-noon-v1' ELSE NULL END,
-               '["Migrated from the athlete-confirmed allocated Link."]', created_at
+               '["Migrated from the athlete-confirmed allocated Link."]', version, created_at
         FROM allocated_links_0006
         WHERE completed_activity_id IN (
             SELECT completed_activity_id FROM allocated_links_0006
@@ -101,18 +105,56 @@ def upgrade() -> None:
         )
     """))
     op.drop_table("allocated_links_0006")
+    op.create_table(
+        "match_evaluations",
+        sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column("completed_activity_id", sa.String(36), nullable=False),
+        sa.Column("activity_effective_version", sa.String(64), nullable=False),
+        sa.Column("algorithm_version", sa.String(64), nullable=False),
+        sa.Column("candidate_results", sa.Text(), nullable=False),
+        sa.Column("evaluated_at", sa.String(32), nullable=False),
+        sa.ForeignKeyConstraint(["completed_activity_id"], ["completed_activities.id"], ondelete="CASCADE"),
+    )
+    op.create_index("ix_match_evaluation_activity", "match_evaluations", ["completed_activity_id"])
+    op.create_table(
+        "link_decisions",
+        sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column("completed_activity_id", sa.String(36), nullable=False),
+        sa.Column("link_id", sa.String(36), nullable=False),
+        sa.Column("action", sa.String(16), nullable=False),
+        sa.Column("prior_planned_session_id", sa.String(36), nullable=True),
+        sa.Column("planned_session_id", sa.String(36), nullable=True),
+        sa.Column("prior_source", sa.String(32), nullable=True),
+        sa.Column("prior_algorithm_version", sa.String(64), nullable=True),
+        sa.Column("prior_reasons", sa.Text(), nullable=True),
+        sa.Column("decided_at", sa.String(32), nullable=False),
+        sa.ForeignKeyConstraint(["completed_activity_id"], ["completed_activities.id"], ondelete="CASCADE"),
+        sa.CheckConstraint("action IN ('changed', 'removed')", name="ck_link_decision_action"),
+    )
+    op.create_index("ix_link_decision_activity", "link_decisions", ["completed_activity_id"])
 
 
 def downgrade() -> None:
     connection = op.get_bind()
-    unarchived = connection.execute(sa.text("""
-        SELECT count(*) FROM links l
-        LEFT JOIN legacy_link_records r ON r.id = l.id
-        WHERE r.id IS NULL
+    changed = connection.execute(sa.text("""
+        SELECT count(*) FROM (
+            SELECT id, planned_session_id FROM links
+            EXCEPT
+            SELECT id, planned_session_id FROM legacy_link_records
+            UNION ALL
+            SELECT id, planned_session_id FROM legacy_link_records WHERE resolution_id IS NULL
+            EXCEPT
+            SELECT id, planned_session_id FROM links
+        )
     """)).scalar_one()
     resolved = connection.execute(sa.text("SELECT count(*) FROM legacy_link_resolutions WHERE status = 'resolved'")).scalar_one()
-    if unarchived or resolved:
+    decisions = connection.execute(sa.text("SELECT count(*) FROM link_decisions")).scalar_one()
+    if changed or resolved or decisions:
         raise RuntimeError("Cannot downgrade whole-activity Links after new or resolved Link data exists")
+    op.drop_index("ix_link_decision_activity", table_name="link_decisions")
+    op.drop_table("link_decisions")
+    op.drop_index("ix_match_evaluation_activity", table_name="match_evaluations")
+    op.drop_table("match_evaluations")
     op.drop_index("ix_link_completed_activity", table_name="links")
     op.drop_index("ix_link_planned_session", table_name="links")
     op.drop_table("links")

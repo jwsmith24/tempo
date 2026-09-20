@@ -18,6 +18,11 @@ class DirectLinkCreate(BaseModel):
 
 class LinkChange(BaseModel):
     planned_session_id: str
+    expected_version: int
+
+
+class LinkRemove(BaseModel):
+    expected_version: int
 
 
 class LinkRead(BaseModel):
@@ -29,6 +34,7 @@ class LinkRead(BaseModel):
     source: str
     algorithm_version: str | None
     reasons: list[str]
+    version: int
     created_at: datetime
 
 

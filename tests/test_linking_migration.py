@@ -81,6 +81,7 @@ def test_migration_preserves_zero_one_and_multiple_link_activities(
             "source",
             "algorithm_version",
             "reasons",
+            "version",
             "created_at",
         }
         assert connection.execute(
@@ -96,7 +97,7 @@ def test_migration_preserves_zero_one_and_multiple_link_activities(
         ]
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
-                "INSERT INTO links VALUES ('duplicate', 'plan-multi-a', 'activity-one', 'direct', NULL, '[]', '2026-09-20T02:00:00Z')"
+                "INSERT INTO links VALUES ('duplicate', 'plan-multi-a', 'activity-one', 'direct', NULL, '[]', 1, '2026-09-20T02:00:00Z')"
             )
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
@@ -111,3 +112,28 @@ def test_migration_preserves_zero_one_and_multiple_link_activities(
             ("link-multi-b", "plan-multi-b", "activity-multi", 1800),
             ("link-one", "plan-one", "activity-one", 3300),
         ]
+
+
+@pytest.mark.parametrize("mutation", ["change", "remove"])
+def test_downgrade_refuses_changed_or_removed_migrated_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    database = tmp_path / f"unsafe-{mutation}.db"
+    monkeypatch.setenv("TEMPO_DATABASE_URL", f"sqlite:///{database}")
+    config = Config("alembic.ini")
+    migrate(config, "0006")
+    with sqlite3.connect(database) as connection:
+        seed_plan(connection, "one")
+        seed_plan(connection, "other")
+        seed_activity(connection, "one")
+        seed_link(connection, "one", "one", 3300)
+    migrate(config, "0007")
+    with sqlite3.connect(database) as connection:
+        if mutation == "change":
+            connection.execute(
+                "UPDATE links SET planned_session_id = 'plan-other' WHERE id = 'link-one'"
+            )
+        else:
+            connection.execute("DELETE FROM links WHERE id = 'link-one'")
+    with pytest.raises(RuntimeError, match="Cannot downgrade"):
+        migrate(config, "-0006")

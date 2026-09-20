@@ -113,7 +113,7 @@ def test_direct_link_can_be_changed_removed_and_revisited(client: TestClient) ->
     created = client.post(url, json={"planned_session_id": first["id"]})
     assert created.status_code == 201
     assert created.json()["source"] == "direct"
-    changed = client.put(url, json={"planned_session_id": second["id"]})
+    changed = client.put(url, json={"planned_session_id": second["id"], "expected_version": 1})
     assert changed.status_code == 200
     assert changed.json()["planned_session_id"] == second["id"]
 
@@ -121,7 +121,7 @@ def test_direct_link_can_be_changed_removed_and_revisited(client: TestClient) ->
         detail = restarted_client.get(f"/api/activities/{activity['id']}/linking").json()
         assert detail["link"]["planned_run"]["id"] == second["id"]
 
-    assert client.delete(url).status_code == 204
+    assert client.request("DELETE", url, json={"expected_version": 2}).status_code == 204
     detail = client.get(f"/api/activities/{activity['id']}/linking").json()
     assert detail["link"] is None
     assert detail["activity"]["link_status"] == "unmatched"
@@ -160,6 +160,24 @@ def test_concurrent_direct_links_enforce_one_activity_owner(
     assert sorted(response.status_code for response in responses) == [201, 409]
     with Session(create_engine(database_url)) as session:
         assert session.scalar(select(func.count()).select_from(Link)) == 1
+
+
+def test_stale_link_change_and_removal_are_rejected(client: TestClient) -> None:
+    first = create_run(client, "2026-09-01")
+    second = create_run(client, "2026-10-01")
+    activity = create_activity(client, start="2026-09-20T08:00:00+00:00")
+    url = f"/api/activities/{activity['id']}/linking/link"
+    assert client.post(url, json={"planned_session_id": first["id"]}).status_code == 201
+    assert client.put(
+        url, json={"planned_session_id": second["id"], "expected_version": 1}
+    ).status_code == 200
+
+    stale_change = client.put(
+        url, json={"planned_session_id": first["id"], "expected_version": 1}
+    )
+    stale_remove = client.request("DELETE", url, json={"expected_version": 1})
+    assert stale_change.status_code == 409
+    assert stale_remove.status_code == 409
 
 
 def test_non_running_activity_is_not_matched(client: TestClient) -> None:
