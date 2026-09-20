@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+: "${WORKTREE_PATH:?Agent Manager must set WORKTREE_PATH}"
+: "${REPO_PATH:?Agent Manager must set REPO_PATH}"
+
+mkdir -p "$WORKTREE_PATH/.tempo-local" "$WORKTREE_PATH/.tempo-test"
+
+if [ ! -e "$WORKTREE_PATH/.venv" ]; then
+    if [ -d "$REPO_PATH/.venv" ]; then
+        ln -s "$REPO_PATH/.venv" "$WORKTREE_PATH/.venv"
+    else
+        python3 -m venv "$WORKTREE_PATH/.venv"
+        "$WORKTREE_PATH/.venv/bin/pip" install -e "$WORKTREE_PATH[dev]"
+    fi
+fi
+
+if [ ! -e "$WORKTREE_PATH/frontend/node_modules" ]; then
+    if [ -d "$REPO_PATH/frontend/node_modules" ]; then
+        ln -s "$REPO_PATH/frontend/node_modules" "$WORKTREE_PATH/frontend/node_modules"
+    else
+        npm --prefix "$WORKTREE_PATH/frontend" ci
+    fi
+fi
+
+"$WORKTREE_PATH/.venv/bin/python" -c "import fastapi, sqlalchemy"
+npm --prefix "$WORKTREE_PATH/frontend" exec -- tsc --version

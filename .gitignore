@@ -16,4 +16,8 @@ frontend/*.config.js
 frontend/*.config.d.ts
 *.tsbuildinfo
 openapi.json
-.kilo
+.tempo-local/
+.tempo-test/
+.kilo/*
+!.kilo/setup-script
+!.kilo/run-script

@@ -90,7 +90,7 @@ test("resolves preserved legacy Links without hiding their history", async ({ pa
   const secondId = secondUrl.split("/").at(-1)!;
   await createActivity(page, "2026-11-20", "Legacy combined recording");
   const activityId = page.url().split("/").at(-1)!;
-  const database = "/tmp/tempo-playwright.db";
+  const database = process.env.TEMPO_PLAYWRIGHT_DATABASE_PATH!;
   execFileSync("../.venv/bin/python", ["-c", `
 import sqlite3, uuid
 db, activity, first, second = ${JSON.stringify(database)}, ${JSON.stringify(activityId)}, ${JSON.stringify(firstId)}, ${JSON.stringify(secondId)}

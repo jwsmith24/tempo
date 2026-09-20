@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+WORKTREE_PATH=${WORKTREE_PATH:-$(pwd)}
+state_directory="$WORKTREE_PATH/.tempo-local"
+mkdir -p "$state_directory/data"
+
+port_offset=$(printf '%s' "$WORKTREE_PATH" | cksum | cut -d ' ' -f 1)
+port=$((8200 + port_offset % 700))
+
+export TEMPO_DATABASE_URL="sqlite:///$state_directory/tempo.db"
+export TEMPO_DATA_DIR="$state_directory/data"
+
+npm --prefix "$WORKTREE_PATH/frontend" run build
+"$WORKTREE_PATH/.venv/bin/alembic" -c "$WORKTREE_PATH/alembic.ini" upgrade head
+exec "$WORKTREE_PATH/.venv/bin/uvicorn" tempo.main:app \
+    --app-dir "$WORKTREE_PATH" \
+    --host 127.0.0.1 \
+    --port "$port"
