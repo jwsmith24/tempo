@@ -6,6 +6,7 @@ type PlannedRun = components["schemas"]["PlannedRunRead"];
 type ManualActivityCreate = components["schemas"]["ManualActivityCreate"];
 type CompletedActivity = components["schemas"]["CompletedActivityRead"];
 type ActivityMatchSuggestion = components["schemas"]["ActivityMatchSuggestionRead"];
+type ActivityReconciliation = components["schemas"]["ActivityReconciliationRead"];
 type ReconciliationEvidence = components["schemas"]["ReconciliationEvidenceRead"];
 type ValidationError = components["schemas"]["HTTPValidationError"];
 
@@ -64,6 +65,8 @@ export function App() {
   const [activity, setActivity] = useState<CompletedActivity | null>(null);
   const [activities, setActivities] = useState<CompletedActivity[]>([]);
   const [activitySuggestions, setActivitySuggestions] = useState<ActivityMatchSuggestion[]>([]);
+  const [activityReconciliation, setActivityReconciliation] = useState<ActivityReconciliation | null>(null);
+  const [plannedRuns, setPlannedRuns] = useState<PlannedRun[]>([]);
   const [evidence, setEvidence] = useState<ReconciliationEvidence | null>(null);
   const [loading, setLoading] = useState(Boolean(plannedRunId() || activityId() || currentRoute === "activity-list"));
   const [status, setStatus] = useState("");
@@ -92,7 +95,7 @@ export function App() {
         }
         else if (completedActivityId) {
           setActivity(result as CompletedActivity);
-          await refreshActivitySuggestions(completedActivityId);
+          await refreshActivityReconciliation(completedActivityId);
         }
         else setActivities(result as CompletedActivity[]);
       })
@@ -184,7 +187,7 @@ export function App() {
     const created = (await response.json()) as CompletedActivity;
     window.history.pushState({}, "", `/activities/${created.id}`);
     setActivity(created);
-    if (await refreshActivitySuggestions(created.id)) {
+    if (await refreshActivityReconciliation(created.id)) {
       setStatus("Saved as unmatched training evidence. Review any suggested Planned Run match below.");
     }
   }
@@ -207,7 +210,7 @@ export function App() {
     const imported = (await response.json()) as CompletedActivity;
     window.history.pushState({}, "", `/activities/${imported.id}`);
     setActivity(imported);
-    if (await refreshActivitySuggestions(imported.id)) {
+    if (await refreshActivityReconciliation(imported.id)) {
       setStatus("Imported as unmatched training evidence. Review any suggested Planned Run match below.");
     }
   }
@@ -220,6 +223,22 @@ export function App() {
     }
     setActivitySuggestions((await response.json()) as ActivityMatchSuggestion[]);
     return true;
+  }
+
+  async function refreshActivityReconciliation(completedActivityId: string): Promise<boolean> {
+    const [activityResponse, reconciliationResponse, plansResponse] = await Promise.all([
+      fetch(`/api/activities/${completedActivityId}`),
+      fetch(`/api/activities/${completedActivityId}/reconciliation`),
+      fetch("/api/planned-runs"),
+    ]);
+    if (!activityResponse.ok || !reconciliationResponse.ok || !plansResponse.ok) {
+      setStatus("Reconciliation details could not be loaded.");
+      return false;
+    }
+    setActivity((await activityResponse.json()) as CompletedActivity);
+    setActivityReconciliation((await reconciliationResponse.json()) as ActivityReconciliation);
+    setPlannedRuns((await plansResponse.json()) as PlannedRun[]);
+    return refreshActivitySuggestions(completedActivityId);
   }
 
   async function rejectSuggestion(plannedSessionId: string) {
@@ -260,10 +279,68 @@ export function App() {
       setStatus("Reconciliation was not confirmed. Review the allocation.");
       return;
     }
-    const refreshedActivityResponse = await fetch(`/api/activities/${activity.id}`);
-    if (refreshedActivityResponse.ok) setActivity((await refreshedActivityResponse.json()) as CompletedActivity);
-    await refreshActivitySuggestions(activity.id);
+    await refreshActivityReconciliation(activity.id);
     setStatus("Reconciliation confirmed. Session Outcome remains not recorded.");
+  }
+
+  function allocationBody(form: FormData) {
+    const duration = Number(form.get("allocated_duration_minutes"));
+    const distanceInput = String(form.get("allocated_distance_kilometres"));
+    return {
+      allocated_duration_seconds: Math.round(duration * 60),
+      allocated_distance_metres: distanceInput === "" ? null : Math.round(Number(distanceInput) * 1000),
+    };
+  }
+
+  async function createDirectAllocation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!activity) return;
+    setErrors({});
+    const form = new FormData(event.currentTarget);
+    const response = await fetch(`/api/activities/${activity.id}/reconciliation/allocations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ planned_session_id: String(form.get("planned_session_id")), ...allocationBody(form) }),
+    });
+    if (!response.ok) {
+      const result = (await response.json()) as { detail?: unknown };
+      setErrors({ directAllocation: typeof result.detail === "string" ? result.detail : "Enter a positive allocation within the remaining evidence." });
+      setStatus("Direct allocation was not created. Review the allocation.");
+      return;
+    }
+    await refreshActivityReconciliation(activity.id);
+    setStatus("Direct allocation created. Remaining evidence stays visible.");
+  }
+
+  async function updateDirectAllocation(event: FormEvent<HTMLFormElement>, allocationId: string, version: number) {
+    event.preventDefault();
+    if (!activity) return;
+    setErrors({});
+    const response = await fetch(`/api/activities/${activity.id}/reconciliation/allocations/${allocationId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...allocationBody(new FormData(event.currentTarget)), expected_version: version }),
+    });
+    if (!response.ok) {
+      const result = (await response.json()) as { detail?: unknown };
+      setErrors({ [`edit-${allocationId}`]: typeof result.detail === "string" ? result.detail : "The allocation could not be updated." });
+      setStatus("Allocation was not updated. Review the allocation.");
+      return;
+    }
+    await refreshActivityReconciliation(activity.id);
+    setStatus("Allocation updated. Remaining evidence recalculated.");
+  }
+
+  async function removeDirectAllocation(allocationId: string, version: number) {
+    if (!activity) return;
+    const response = await fetch(`/api/activities/${activity.id}/reconciliation/allocations/${allocationId}?expected_version=${version}`, { method: "DELETE" });
+    if (!response.ok) {
+      const result = (await response.json()) as { detail?: string };
+      setStatus(result.detail || "Allocation could not be removed.");
+      return;
+    }
+    await refreshActivityReconciliation(activity.id);
+    setStatus("Allocation removed. The observed evidence remains in the local record.");
   }
 
   const showingActivity = currentRoute !== "run" || activity !== null;
@@ -300,7 +377,7 @@ export function App() {
         </p>
       </section>
       <p className="status" role="status" aria-live="polite">{loading ? "Loading local record..." : status}</p>
-      {activity ? <ActivityDetail activity={activity} suggestions={activitySuggestions} errors={errors} onReject={rejectSuggestion} onConfirm={confirmSuggestion} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : currentRoute === "activity-import" ? <ImportForm onSubmit={importActivity} errors={errors} /> : run ? <RunDetail run={run} evidence={evidence} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
+      {activity ? <ActivityDetail activity={activity} suggestions={activitySuggestions} reconciliation={activityReconciliation} plannedRuns={plannedRuns} errors={errors} onReject={rejectSuggestion} onConfirm={confirmSuggestion} onCreateDirect={createDirectAllocation} onUpdate={updateDirectAllocation} onRemove={removeDirectAllocation} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : currentRoute === "activity-import" ? <ImportForm onSubmit={importActivity} errors={errors} /> : run ? <RunDetail run={run} evidence={evidence} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
     </main>
   );
 }
@@ -399,15 +476,25 @@ function ActivityList({ activities }: { activities: CompletedActivity[] }) {
 function ActivityDetail({
   activity,
   suggestions,
+  reconciliation,
+  plannedRuns,
   errors,
   onReject,
   onConfirm,
+  onCreateDirect,
+  onUpdate,
+  onRemove,
 }: {
   activity: CompletedActivity;
   suggestions: ActivityMatchSuggestion[];
+  reconciliation: ActivityReconciliation | null;
+  plannedRuns: PlannedRun[];
   errors: Record<string, string>;
   onReject: (plannedSessionId: string) => void;
   onConfirm: (event: FormEvent<HTMLFormElement>, plannedSessionId: string) => void;
+  onCreateDirect: (event: FormEvent<HTMLFormElement>) => void;
+  onUpdate: (event: FormEvent<HTMLFormElement>, allocationId: string, version: number) => void;
+  onRemove: (allocationId: string, version: number) => void;
 }) {
   const provenance = activity.import_provenance;
   return (
@@ -440,6 +527,37 @@ function ActivityDetail({
       </dl></div>}
       <footer><span>{provenance ? "Source: Garmin FIT import" : "Source: manual / Created by athlete entry"}</span><code>{activity.id}</code></footer>
     </article>
+    {reconciliation && (
+      <section className="reconciliation-panel confirmed-panel" aria-label="Direct Reconciliation allocations">
+        <div className="section-heading"><div><span className="revision">Confirmed allocations</span><h2>Allocate observed evidence</h2></div></div>
+        <p>{formatDuration(reconciliation.unallocated_duration_seconds)} unallocated{reconciliation.unallocated_distance_metres === null ? "" : ` / ${reconciliation.unallocated_distance_metres / 1000} km unallocated`}</p>
+        {reconciliation.allocations.map(({ allocation, planned_run: plannedRun }) => {
+          const label = `${intentLabels[plannedRun.training_intent]} on ${plannedRun.scheduled_date}`;
+          const allocationError = errors[`edit-${allocation.id}`];
+          const errorId = `edit-allocation-error-${allocation.id}`;
+          return (
+            <form className="suggestion-card" aria-label={`Allocation to ${label}`} key={allocation.id} onSubmit={(event) => onUpdate(event, allocation.id, allocation.version)}>
+              <div><strong>{label}</strong><small>{allocation.confirmation_source === "direct" ? "Direct allocation" : "Confirmed suggestion"}</small></div>
+              <div className="allocation-fields">
+                <label><span>Allocated duration</span><span className="unit-input"><input name="allocated_duration_minutes" type="number" min="0.0167" step="any" required defaultValue={allocation.allocated_duration_seconds / 60} aria-invalid={Boolean(allocationError)} aria-describedby={allocationError ? errorId : undefined} /><b>min</b></span></label>
+                <label><span>Allocated distance <i>Optional</i></span><span className="unit-input"><input name="allocated_distance_kilometres" type="number" min="0.001" step="any" defaultValue={allocation.allocated_distance_metres === null ? "" : allocation.allocated_distance_metres / 1000} aria-invalid={Boolean(allocationError)} aria-describedby={allocationError ? errorId : undefined} /><b>km</b></span></label>
+              </div>
+              {allocationError && <small className="error" id={errorId}>{allocationError}</small>}
+              <div className="suggestion-actions"><button type="button" className="secondary-button" onClick={() => onRemove(allocation.id, allocation.version)}>Remove allocation</button><button type="submit">Save allocation</button></div>
+            </form>
+          );
+        })}
+        <form className="suggestion-card" aria-label="Create direct allocation" onSubmit={onCreateDirect}>
+          <label><span>Planned Run</span><select name="planned_session_id" required defaultValue=""><option value="" disabled>Choose a Planned Run</option>{plannedRuns.map((plannedRun) => <option key={plannedRun.id} value={plannedRun.id}>{intentLabels[plannedRun.training_intent]} on {plannedRun.scheduled_date}</option>)}</select></label>
+          <div className="allocation-fields">
+            <label><span>Allocated duration</span><span className="unit-input"><input name="allocated_duration_minutes" type="number" min="0.0167" step="any" required defaultValue={reconciliation.unallocated_duration_seconds / 60} aria-invalid={Boolean(errors.directAllocation)} aria-describedby={errors.directAllocation ? "direct-allocation-error" : undefined} /><b>min</b></span></label>
+            <label><span>Allocated distance <i>Optional</i></span><span className="unit-input"><input name="allocated_distance_kilometres" type="number" min="0.001" step="any" defaultValue={reconciliation.unallocated_distance_metres === null ? "" : reconciliation.unallocated_distance_metres / 1000} aria-invalid={Boolean(errors.directAllocation)} aria-describedby={errors.directAllocation ? "direct-allocation-error" : undefined} /><b>km</b></span></label>
+          </div>
+          {errors.directAllocation && <small className="error" id="direct-allocation-error">{errors.directAllocation}</small>}
+          <button type="submit">Create allocation</button>
+        </form>
+      </section>
+    )}
     {suggestions.length > 0 ? (
       <section className="reconciliation-panel" aria-label="Suggested Planned Run matches">
         <div className="section-heading"><div><span className="pending-badge">Pending suggestion</span><h2>Match this activity to a plan</h2></div><code>{suggestions[0].algorithm_version}</code></div>

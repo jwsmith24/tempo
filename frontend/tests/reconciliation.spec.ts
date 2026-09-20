@@ -73,3 +73,55 @@ test("rejects a suggestion without changing source records", async ({ page }) =>
   await page.reload();
   await expect(page.getByText("No compatible Planned Run suggestions.")).toBeVisible();
 });
+
+test("creates edits and removes direct allocations without a suggestion", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("Local date").fill("2026-10-10");
+  await page.getByLabel("Duration").fill("60");
+  await page.getByLabel("Distance").fill("10");
+  await page.getByRole("button", { name: /Save Planned Run/ }).click();
+
+  await page.goto("/activities/new");
+  await page.getByLabel("Local start").fill("2026-10-20T08:00");
+  await page.getByLabel("UTC offset").fill("+00:00");
+  await page.getByLabel("Duration").fill("60");
+  await page.getByLabel(/Distance/).fill("10");
+  await page.getByLabel(/Title/).fill("Combined direct allocation");
+  await page.getByRole("button", { name: /Save Completed Activity/ }).click();
+
+  await expect(page.getByText("No compatible Planned Run suggestions.")).toBeVisible();
+  const direct = page.getByRole("form", { name: "Create direct allocation" });
+  await direct.getByLabel("Planned Run").selectOption({ label: "Aerobic base on 2026-10-10" });
+  await direct.getByLabel("Allocated duration").fill("61");
+  await direct.getByRole("button", { name: "Create allocation" }).click();
+  await expect(page.getByRole("status")).toContainText("Direct allocation was not created");
+  await expect(direct.getByLabel("Allocated duration")).toHaveAttribute("aria-describedby", "direct-allocation-error");
+  await expect(page.locator("#direct-allocation-error")).toContainText("remaining 3600 seconds");
+  await direct.getByLabel("Allocated duration").fill("40");
+  await direct.getByLabel(/Allocated distance/).fill("7");
+  await direct.getByRole("button", { name: "Create allocation" }).press("Enter");
+
+  await expect(page.getByRole("status")).toContainText("Direct allocation created");
+  await expect(page.getByText("Partly reconciled", { exact: true })).toBeVisible();
+  await expect(page.getByText("20 min unallocated")).toBeVisible();
+  await expect(page.getByText("3 km unallocated")).toBeVisible();
+
+  const allocation = page.getByRole("form", { name: "Allocation to Aerobic base on 2026-10-10" });
+  const duration = allocation.getByLabel("Allocated duration");
+  await duration.focus();
+  await expect(duration).toHaveCSS("outline-style", "solid");
+  await duration.fill("30");
+  await allocation.getByLabel(/Allocated distance/).fill("5");
+  await allocation.getByRole("button", { name: "Save allocation" }).press("Enter");
+  await expect(page.getByRole("status")).toContainText("Allocation updated");
+  await expect(page.getByText("30 min unallocated")).toBeVisible();
+
+  await allocation.getByRole("button", { name: "Remove allocation" }).press("Enter");
+  await expect(page.getByRole("status")).toContainText("Allocation removed");
+  await expect(page.getByText("Unmatched", { exact: true })).toBeVisible();
+  await expect(page.getByText("1 hr unallocated")).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole("form", { name: "Create direct allocation" })).toBeVisible();
+  await expect(page.getByRole("form", { name: /Allocation to/ })).toHaveCount(0);
+});

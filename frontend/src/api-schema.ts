@@ -11,7 +11,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List Planned Runs */
+        get: operations["list_planned_runs_api_planned_runs_get"];
         put?: never;
         /** Create Planned Run */
         post: operations["create_planned_run_api_planned_runs_post"];
@@ -175,10 +176,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/activities/{activity_id}/reconciliation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Activity Reconciliation */
+        get: operations["get_activity_reconciliation_api_activities__activity_id__reconciliation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/activities/{activity_id}/reconciliation/allocations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Direct Allocation */
+        post: operations["create_direct_allocation_api_activities__activity_id__reconciliation_allocations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/activities/{activity_id}/reconciliation/allocations/{allocation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Adjust Allocation */
+        put: operations["adjust_allocation_api_activities__activity_id__reconciliation_allocations__allocation_id__put"];
+        post?: never;
+        /** Delete Allocation */
+        delete: operations["delete_allocation_api_activities__activity_id__reconciliation_allocations__allocation_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActivityAllocationRead */
+        ActivityAllocationRead: {
+            allocation: components["schemas"]["AllocationRead"];
+            planned_run: components["schemas"]["PlannedRunRead"];
+        };
         /**
          * ActivityEntrySource
          * @enum {string}
@@ -203,6 +261,16 @@ export interface components {
          * @enum {string}
          */
         ActivityModality: "running" | "cycling" | "strength" | "other";
+        /** ActivityReconciliationRead */
+        ActivityReconciliationRead: {
+            activity: components["schemas"]["CompletedActivityRead"];
+            /** Allocations */
+            allocations: components["schemas"]["ActivityAllocationRead"][];
+            /** Unallocated Duration Seconds */
+            unallocated_duration_seconds: number;
+            /** Unallocated Distance Metres */
+            unallocated_distance_metres: number | null;
+        };
         /** AllocationEvidenceRead */
         AllocationEvidenceRead: {
             allocation: components["schemas"]["AllocationRead"];
@@ -226,11 +294,22 @@ export interface components {
             allocated_distance_metres: number | null;
             /** Confirmation Source */
             confirmation_source: string;
+            /** Version */
+            version: number;
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
+        };
+        /** AllocationUpdate */
+        AllocationUpdate: {
+            /** Allocated Duration Seconds */
+            allocated_duration_seconds: number;
+            /** Allocated Distance Metres */
+            allocated_distance_metres?: number | null;
+            /** Expected Version */
+            expected_version: number;
         };
         /** Body_import_fit_api_activities_imports_fit_post */
         Body_import_fit_api_activities_imports_fit_post: {
@@ -272,6 +351,15 @@ export interface components {
              */
             reconciliation_status: string;
             import_provenance?: components["schemas"]["ImportProvenanceRead"] | null;
+        };
+        /** DirectAllocationCreate */
+        DirectAllocationCreate: {
+            /** Planned Session Id */
+            planned_session_id: string;
+            /** Allocated Duration Seconds */
+            allocated_duration_seconds: number;
+            /** Allocated Distance Metres */
+            allocated_distance_metres?: number | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -450,6 +538,26 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_planned_runs_api_planned_runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlannedRunRead"][];
+                };
+            };
+        };
+    };
     create_planned_run_api_planned_runs_post: {
         parameters: {
             query?: never;
@@ -780,6 +888,140 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ActivityMatchSuggestionRead"][];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_activity_reconciliation_api_activities__activity_id__reconciliation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                activity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityReconciliationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_direct_allocation_api_activities__activity_id__reconciliation_allocations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                activity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DirectAllocationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AllocationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    adjust_allocation_api_activities__activity_id__reconciliation_allocations__allocation_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                activity_id: string;
+                allocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AllocationUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AllocationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_allocation_api_activities__activity_id__reconciliation_allocations__allocation_id__delete: {
+        parameters: {
+            query: {
+                expected_version: number;
+            };
+            header?: never;
+            path: {
+                activity_id: string;
+                allocation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

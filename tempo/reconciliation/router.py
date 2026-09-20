@@ -10,7 +10,11 @@ from tempo.reconciliation.models import ReconciliationAllocation
 from tempo.reconciliation.schemas import (
     AllocationEvidenceRead,
     AllocationRead,
+    AllocationUpdate,
+    ActivityAllocationRead,
     ActivityMatchSuggestionRead,
+    ActivityReconciliationRead,
+    DirectAllocationCreate,
     MatchSuggestionRead,
     ReconciliationEvidenceRead,
     SuggestionConfirm,
@@ -21,9 +25,12 @@ from tempo.reconciliation.service import (
     ReconciliationConflict,
     allocated_totals,
     confirm_suggestion,
+    create_allocation,
     list_suggestions,
     load_planned_session,
     reject_suggestion,
+    remove_allocation,
+    update_allocation,
 )
 
 router = APIRouter(prefix="/api/planned-runs", tags=["reconciliation"])
@@ -113,6 +120,135 @@ def require_records(
     return planned_session, activity
 
 
+def require_activity(session: Session, activity_id: str) -> CompletedActivity:
+    activity = session.get(CompletedActivity, activity_id)
+    if activity is None:
+        raise HTTPException(status_code=404, detail="Completed Activity not found.")
+    return activity
+
+
+def require_allocation(
+    session: Session, activity_id: str, allocation_id: str
+) -> ReconciliationAllocation:
+    allocation = session.scalar(
+        select(ReconciliationAllocation).where(
+            ReconciliationAllocation.id == allocation_id,
+            ReconciliationAllocation.completed_activity_id == activity_id,
+        )
+    )
+    if allocation is None:
+        raise HTTPException(status_code=404, detail="Reconciliation allocation not found.")
+    return allocation
+
+
+@activity_router.get(
+    "/{activity_id}/reconciliation", response_model=ActivityReconciliationRead
+)
+def get_activity_reconciliation(
+    activity_id: str, session: Session = Depends(get_session)
+) -> ActivityReconciliationRead:
+    activity = require_activity(session, activity_id)
+    allocations = list(
+        session.scalars(
+            select(ReconciliationAllocation)
+            .where(ReconciliationAllocation.completed_activity_id == activity_id)
+            .order_by(ReconciliationAllocation.created_at, ReconciliationAllocation.id)
+        )
+    )
+    allocation_reads: list[ActivityAllocationRead] = []
+    for allocation in allocations:
+        planned_session = load_planned_session(session, allocation.planned_session_id)
+        if planned_session is not None:
+            allocation_reads.append(
+                ActivityAllocationRead(allocation=allocation, planned_run=planned_session)
+            )
+    allocated_duration, allocated_distance = allocated_totals(session, activity_id)
+    return ActivityReconciliationRead(
+        activity=activity_response(
+            activity, activity_reconciliation_status(session, activity_id)
+        ),
+        allocations=allocation_reads,
+        unallocated_duration_seconds=activity.duration_seconds - allocated_duration,
+        unallocated_distance_metres=(
+            activity.distance_metres - allocated_distance
+            if activity.distance_metres is not None
+            else None
+        ),
+    )
+
+
+@activity_router.post(
+    "/{activity_id}/reconciliation/allocations",
+    response_model=AllocationRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_direct_allocation(
+    activity_id: str,
+    request: DirectAllocationCreate,
+    session: Session = Depends(get_session),
+) -> ReconciliationAllocation:
+    session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    planned_session, activity = require_records(
+        session, request.planned_session_id, activity_id
+    )
+    try:
+        return create_allocation(
+            session,
+            planned_session,
+            activity,
+            request.allocated_duration_seconds,
+            request.allocated_distance_metres,
+            "direct",
+        )
+    except ReconciliationConflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@activity_router.put(
+    "/{activity_id}/reconciliation/allocations/{allocation_id}",
+    response_model=AllocationRead,
+)
+def adjust_allocation(
+    activity_id: str,
+    allocation_id: str,
+    request: AllocationUpdate,
+    session: Session = Depends(get_session),
+) -> ReconciliationAllocation:
+    session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    activity = require_activity(session, activity_id)
+    allocation = require_allocation(session, activity_id, allocation_id)
+    try:
+        return update_allocation(
+            session,
+            allocation,
+            activity,
+            request.allocated_duration_seconds,
+            request.allocated_distance_metres,
+            request.expected_version,
+        )
+    except ReconciliationConflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@activity_router.delete(
+    "/{activity_id}/reconciliation/allocations/{allocation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_allocation(
+    activity_id: str,
+    allocation_id: str,
+    expected_version: int,
+    session: Session = Depends(get_session),
+) -> None:
+    session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    require_activity(session, activity_id)
+    allocation = require_allocation(session, activity_id, allocation_id)
+    try:
+        remove_allocation(session, allocation, expected_version)
+    except ReconciliationConflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
 @router.post(
     "/{planned_session_id}/reconciliation/suggestions/{activity_id}/reject",
     response_model=SuggestionDecisionRead,
@@ -190,7 +326,9 @@ def get_reconciliation_evidence(
         evidence.append(
             AllocationEvidenceRead(
                 allocation=allocation,
-                activity=activity_response(activity, "allocated"),
+                activity=activity_response(
+                    activity, activity_reconciliation_status(session, activity.id)
+                ),
                 unmatched_duration_seconds=activity.duration_seconds - total_duration,
                 unmatched_distance_metres=(
                     activity.distance_metres - total_distance
@@ -199,7 +337,11 @@ def get_reconciliation_evidence(
                 ),
             )
         )
-    allocated_distance = sum(allocated_distances) if allocated_distances else None
+    allocated_distance = (
+        sum(allocated_distances)
+        if allocations and len(allocated_distances) == len(allocations)
+        else None
+    )
     return ReconciliationEvidenceRead(
         planned_run=planned_session,
         allocations=evidence,

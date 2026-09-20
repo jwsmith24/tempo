@@ -41,6 +41,17 @@ def create_planned_run(
     return planned_session
 
 
+@router.get("", response_model=list[PlannedRunRead])
+def list_planned_runs(session: Session = Depends(get_session)) -> list[PlannedSession]:
+    return list(
+        session.scalars(
+            select(PlannedSession)
+            .options(selectinload(PlannedSession.active_revision))
+            .order_by(PlannedSession.scheduled_date, PlannedSession.id)
+        )
+    )
+
+
 @router.get("/{planned_run_id}", response_model=PlannedRunRead)
 def get_planned_run(
     planned_run_id: str, session: Session = Depends(get_session)

@@ -332,3 +332,263 @@ def test_reconciliation_is_available_to_a_restarted_client(client: TestClient) -
         assert restarted_client.get(f"/api/activities/{activity['id']}").json()[
             "reconciliation_status"
         ] == "allocated"
+
+
+def test_direct_allocations_represent_split_and_combined_evidence(client: TestClient) -> None:
+    first_run = create_run(client, "2026-09-20")
+    second_run = create_run(client, "2026-09-24")
+    combined_activity = create_activity(
+        client,
+        start="2026-09-22T08:00:00+00:00",
+        duration=5400,
+        distance=12_000,
+        title="Combined recording",
+    )
+    split_activity = create_activity(
+        client,
+        start="2026-09-20T18:00:00+00:00",
+        duration=1200,
+        distance=3000,
+        title="Second recording",
+    )
+    direct_url = f"/api/activities/{combined_activity['id']}/reconciliation/allocations"
+
+    first = client.post(
+        direct_url,
+        json={
+            "planned_session_id": first_run["id"],
+            "allocated_duration_seconds": 2400,
+            "allocated_distance_metres": 5000,
+        },
+    )
+    second = client.post(
+        direct_url,
+        json={
+            "planned_session_id": second_run["id"],
+            "allocated_duration_seconds": 1800,
+            "allocated_distance_metres": 4000,
+        },
+    )
+    split = client.post(
+        f"/api/activities/{split_activity['id']}/reconciliation/allocations",
+        json={
+            "planned_session_id": first_run["id"],
+            "allocated_duration_seconds": 1200,
+            "allocated_distance_metres": 3000,
+        },
+    )
+
+    assert [first.status_code, second.status_code, split.status_code] == [201, 201, 201]
+    assert first.json()["confirmation_source"] == "direct"
+    assert first.json()["version"] == 1
+    activity_evidence = client.get(
+        f"/api/activities/{combined_activity['id']}/reconciliation"
+    ).json()
+    assert [item["planned_run"]["id"] for item in activity_evidence["allocations"]] == [
+        first_run["id"],
+        second_run["id"],
+    ]
+    assert activity_evidence["unallocated_duration_seconds"] == 1200
+    assert activity_evidence["unallocated_distance_metres"] == 3000
+    first_run_evidence = client.get(
+        f"/api/planned-runs/{first_run['id']}/reconciliation"
+    ).json()
+    assert len(first_run_evidence["allocations"]) == 2
+    assert first_run_evidence["allocated_duration_seconds"] == 3600
+    assert first_run_evidence["allocated_distance_metres"] == 8000
+    assert first_run_evidence["duration_difference_seconds"] == 0
+    assert first_run_evidence["distance_difference_metres"] == 2000
+    assert first_run_evidence["allocations"][0]["activity"]["reconciliation_status"] in {
+        "partially_allocated",
+        "allocated",
+    }
+
+
+def test_direct_allocation_adjustment_removal_and_stale_write(client: TestClient) -> None:
+    run = create_run(client, "2026-09-20")
+    activity = create_activity(
+        client, start="2026-09-28T08:00:00+00:00", duration=3600, distance=8000
+    )
+    allocations_url = f"/api/activities/{activity['id']}/reconciliation/allocations"
+    created = client.post(
+        allocations_url,
+        json={
+            "planned_session_id": run["id"],
+            "allocated_duration_seconds": 1200,
+            "allocated_distance_metres": 2000,
+        },
+    )
+    assert created.status_code == 201
+    allocation = created.json()
+
+    updated = client.put(
+        f"{allocations_url}/{allocation['id']}",
+        json={
+            "allocated_duration_seconds": 1800,
+            "allocated_distance_metres": 3000,
+            "expected_version": 1,
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["version"] == 2
+
+    stale = client.put(
+        f"{allocations_url}/{allocation['id']}",
+        json={
+            "allocated_duration_seconds": 2400,
+            "allocated_distance_metres": 4000,
+            "expected_version": 1,
+        },
+    )
+    assert stale.status_code == 409
+    assert stale.json() == {
+        "detail": "This allocation changed since it was loaded. Reload and try again."
+    }
+
+    removed = client.delete(
+        f"{allocations_url}/{allocation['id']}", params={"expected_version": 2}
+    )
+    assert removed.status_code == 204
+    evidence = client.get(f"/api/activities/{activity['id']}/reconciliation").json()
+    assert evidence["allocations"] == []
+    assert evidence["unallocated_duration_seconds"] == 3600
+    assert evidence["unallocated_distance_metres"] == 8000
+    assert client.get(f"/api/activities/{activity['id']}").json()[
+        "reconciliation_status"
+    ] == "unmatched"
+
+
+def test_direct_allocation_revalidates_aggregate_capacity_and_duplicates(
+    client: TestClient,
+) -> None:
+    first_run = create_run(client)
+    second_run = create_run(client)
+    activity = create_activity(
+        client, start="2026-09-20T08:00:00+00:00", duration=1800, distance=4000
+    )
+    url = f"/api/activities/{activity['id']}/reconciliation/allocations"
+    payload = {
+        "planned_session_id": first_run["id"],
+        "allocated_duration_seconds": 1200,
+        "allocated_distance_metres": 3000,
+    }
+    assert client.post(url, json=payload).status_code == 201
+
+    duplicate = client.post(url, json=payload)
+    assert duplicate.status_code == 409
+    assert duplicate.json() == {
+        "detail": "This Planned Session and Completed Activity are already reconciled."
+    }
+    overallocated = client.post(
+        url,
+        json={
+            "planned_session_id": second_run["id"],
+            "allocated_duration_seconds": 601,
+            "allocated_distance_metres": 1001,
+        },
+    )
+    assert overallocated.status_code == 409
+    assert "remaining 600 seconds" in overallocated.json()["detail"]
+
+    no_distance = create_activity(
+        client, start="2026-09-20T09:00:00+00:00", distance=None
+    )
+    invalid_distance = client.post(
+        f"/api/activities/{no_distance['id']}/reconciliation/allocations",
+        json={
+            "planned_session_id": second_run["id"],
+            "allocated_duration_seconds": 600,
+            "allocated_distance_metres": 1,
+        },
+    )
+    assert invalid_distance.status_code == 409
+    assert invalid_distance.json() == {
+        "detail": "Distance cannot be allocated because the activity has no recorded distance."
+    }
+
+
+def test_concurrent_direct_allocations_cannot_overallocate_activity(
+    client: TestClient, database_url: str
+) -> None:
+    first_run = create_run(client)
+    second_run = create_run(client)
+    activity = create_activity(
+        client, start="2026-09-20T08:00:00+00:00", duration=1800, distance=4000
+    )
+    url = f"/api/activities/{activity['id']}/reconciliation/allocations"
+
+    def allocate(run_id: str):
+        return client.post(
+            url,
+            json={
+                "planned_session_id": run_id,
+                "allocated_duration_seconds": 1200,
+                "allocated_distance_metres": 3000,
+            },
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(allocate, [first_run["id"], second_run["id"]]))
+
+    assert sorted(response.status_code for response in responses) == [201, 409]
+    with Session(create_engine(database_url)) as session:
+        duration, distance = session.execute(
+            select(
+                func.sum(ReconciliationAllocation.allocated_duration_seconds),
+                func.sum(ReconciliationAllocation.allocated_distance_metres),
+            ).where(ReconciliationAllocation.completed_activity_id == activity["id"])
+        ).one()
+        assert duration == 1200
+        assert distance == 3000
+
+
+def test_direct_allocations_are_available_to_a_restarted_client(client: TestClient) -> None:
+    run = create_run(client)
+    activity = create_activity(
+        client, start="2026-09-22T08:00:00+00:00", duration=2400, distance=5000
+    )
+    created = client.post(
+        f"/api/activities/{activity['id']}/reconciliation/allocations",
+        json={
+            "planned_session_id": run["id"],
+            "allocated_duration_seconds": 1200,
+            "allocated_distance_metres": 2000,
+        },
+    )
+    assert created.status_code == 201
+
+    with TestClient(app) as restarted_client:
+        evidence = restarted_client.get(
+            f"/api/activities/{activity['id']}/reconciliation"
+        ).json()
+        assert evidence["allocations"][0]["allocation"]["id"] == created.json()["id"]
+        assert evidence["unallocated_duration_seconds"] == 1200
+        assert evidence["unallocated_distance_metres"] == 3000
+
+
+def test_planned_distance_is_not_compared_when_any_allocation_omits_distance(
+    client: TestClient,
+) -> None:
+    run = create_run(client)
+    first_activity = create_activity(
+        client, start="2026-09-20T08:00:00+00:00", duration=1800, distance=5000
+    )
+    second_activity = create_activity(
+        client, start="2026-09-20T10:00:00+00:00", duration=1800, distance=5000
+    )
+    for activity, distance in ((first_activity, 4000), (second_activity, None)):
+        response = client.post(
+            f"/api/activities/{activity['id']}/reconciliation/allocations",
+            json={
+                "planned_session_id": run["id"],
+                "allocated_duration_seconds": 1800,
+                "allocated_distance_metres": distance,
+            },
+        )
+        assert response.status_code == 201
+
+    evidence = client.get(f"/api/planned-runs/{run['id']}/reconciliation").json()
+    assert evidence["allocated_duration_seconds"] == 3600
+    assert evidence["duration_difference_seconds"] == 0
+    assert evidence["allocated_distance_metres"] is None
+    assert evidence["distance_difference_metres"] is None

@@ -24,12 +24,17 @@ def load_planned_session(session: Session, planned_session_id: str) -> PlannedSe
     )
 
 
-def allocated_totals(session: Session, activity_id: str) -> tuple[int, int]:
+def allocated_totals(
+    session: Session, activity_id: str, exclude_allocation_id: str | None = None
+) -> tuple[int, int]:
+    criteria = [ReconciliationAllocation.completed_activity_id == activity_id]
+    if exclude_allocation_id is not None:
+        criteria.append(ReconciliationAllocation.id != exclude_allocation_id)
     duration, distance = session.execute(
         select(
             func.coalesce(func.sum(ReconciliationAllocation.allocated_duration_seconds), 0),
             func.coalesce(func.sum(ReconciliationAllocation.allocated_distance_metres), 0),
-        ).where(ReconciliationAllocation.completed_activity_id == activity_id)
+        ).where(*criteria)
     ).one()
     return int(duration), int(distance)
 
@@ -116,6 +121,110 @@ class ReconciliationConflict(ValueError):
     pass
 
 
+def validate_capacity(
+    session: Session,
+    activity: CompletedActivity,
+    duration: int,
+    distance: int | None,
+    exclude_allocation_id: str | None = None,
+) -> None:
+    allocated_duration, allocated_distance = allocated_totals(
+        session, activity.id, exclude_allocation_id
+    )
+    remaining_duration = activity.duration_seconds - allocated_duration
+    if duration > remaining_duration:
+        raise ReconciliationConflict(
+            f"Allocated duration exceeds the activity's remaining {remaining_duration} seconds."
+        )
+    if distance is not None and activity.distance_metres is None:
+        raise ReconciliationConflict(
+            "Distance cannot be allocated because the activity has no recorded distance."
+        )
+    remaining_distance = (
+        activity.distance_metres - allocated_distance
+        if activity.distance_metres is not None
+        else None
+    )
+    if distance is not None and remaining_distance is not None and distance > remaining_distance:
+        raise ReconciliationConflict(
+            f"Allocated distance exceeds the activity's remaining {remaining_distance} metres."
+        )
+
+
+def create_allocation(
+    session: Session,
+    planned_session: PlannedSession,
+    activity: CompletedActivity,
+    duration: int,
+    distance: int | None,
+    confirmation_source: str,
+) -> ReconciliationAllocation:
+    existing = session.scalar(
+        select(ReconciliationAllocation.id).where(
+            ReconciliationAllocation.planned_session_id == planned_session.id,
+            ReconciliationAllocation.completed_activity_id == activity.id,
+        )
+    )
+    if existing is not None:
+        raise ReconciliationConflict(
+            "This Planned Session and Completed Activity are already reconciled."
+        )
+    validate_capacity(session, activity, duration, distance)
+    allocation = ReconciliationAllocation(
+        planned_session_id=planned_session.id,
+        completed_activity_id=activity.id,
+        allocated_duration_seconds=duration,
+        allocated_distance_metres=distance,
+        confirmation_source=confirmation_source,
+        version=1,
+        created_at=datetime.now(UTC),
+    )
+    session.add(allocation)
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        raise ReconciliationConflict(
+            "This Planned Session and Completed Activity are already reconciled."
+        ) from error
+    session.refresh(allocation)
+    return allocation
+
+
+def update_allocation(
+    session: Session,
+    allocation: ReconciliationAllocation,
+    activity: CompletedActivity,
+    duration: int,
+    distance: int | None,
+    expected_version: int,
+) -> ReconciliationAllocation:
+    if allocation.version != expected_version:
+        raise ReconciliationConflict(
+            "This allocation changed since it was loaded. Reload and try again."
+        )
+    validate_capacity(session, activity, duration, distance, allocation.id)
+    allocation.allocated_duration_seconds = duration
+    allocation.allocated_distance_metres = distance
+    allocation.version += 1
+    session.commit()
+    session.refresh(allocation)
+    return allocation
+
+
+def remove_allocation(
+    session: Session,
+    allocation: ReconciliationAllocation,
+    expected_version: int,
+) -> None:
+    if allocation.version != expected_version:
+        raise ReconciliationConflict(
+            "This allocation changed since it was loaded. Reload and try again."
+        )
+    session.delete(allocation)
+    session.commit()
+
+
 def suggestion_is_eligible(
     session: Session, planned_session: PlannedSession, activity: CompletedActivity
 ) -> bool:
@@ -164,7 +273,7 @@ def confirm_suggestion(
     default_distance: bool,
 ) -> ReconciliationAllocation:
     existing = session.scalar(
-        select(ReconciliationAllocation).where(
+        select(ReconciliationAllocation.id).where(
             ReconciliationAllocation.planned_session_id == planned_session.id,
             ReconciliationAllocation.completed_activity_id == activity.id,
         )
@@ -183,34 +292,7 @@ def confirm_suggestion(
         else None
     )
     duration = requested_duration if requested_duration is not None else remaining_duration
-    if duration > remaining_duration:
-        raise ReconciliationConflict(
-            f"Allocated duration exceeds the activity's remaining {remaining_duration} seconds."
-        )
-    if requested_distance is not None and remaining_distance is None:
-        raise ReconciliationConflict(
-            "Distance cannot be allocated because the activity has no recorded distance."
-        )
     distance = remaining_distance if default_distance else requested_distance
-    if distance is not None and remaining_distance is not None and distance > remaining_distance:
-        raise ReconciliationConflict(
-            f"Allocated distance exceeds the activity's remaining {remaining_distance} metres."
-        )
-    allocation = ReconciliationAllocation(
-        planned_session_id=planned_session.id,
-        completed_activity_id=activity.id,
-        allocated_duration_seconds=duration,
-        allocated_distance_metres=distance,
-        confirmation_source="suggestion",
-        created_at=datetime.now(UTC),
+    return create_allocation(
+        session, planned_session, activity, duration, distance, "suggestion"
     )
-    session.add(allocation)
-    try:
-        session.commit()
-    except IntegrityError as error:
-        session.rollback()
-        raise ReconciliationConflict(
-            "This Planned Session and Completed Activity are already reconciled."
-        ) from error
-    session.refresh(allocation)
-    return allocation

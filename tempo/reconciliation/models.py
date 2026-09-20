@@ -16,8 +16,10 @@ class ReconciliationAllocation(Base):
             name="ck_allocation_positive_distance",
         ),
         CheckConstraint(
-            "confirmation_source IN ('suggestion')", name="ck_allocation_confirmation_source"
+            "confirmation_source IN ('suggestion', 'direct')",
+            name="ck_allocation_confirmation_source",
         ),
+        CheckConstraint("version > 0", name="ck_allocation_positive_version"),
         UniqueConstraint(
             "planned_session_id", "completed_activity_id", name="uq_reconciliation_pair"
         ),
@@ -35,6 +37,7 @@ class ReconciliationAllocation(Base):
     allocated_duration_seconds: Mapped[int] = mapped_column(Integer)
     allocated_distance_metres: Mapped[int | None] = mapped_column(Integer)
     confirmation_source: Mapped[str] = mapped_column(String(32))
+    version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(UTCInstant())
 
 

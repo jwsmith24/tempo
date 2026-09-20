@@ -34,6 +34,18 @@ class SuggestionConfirm(BaseModel):
     allocated_distance_metres: int | None = Field(default=None, gt=0)
 
 
+class DirectAllocationCreate(BaseModel):
+    planned_session_id: str
+    allocated_duration_seconds: int = Field(gt=0)
+    allocated_distance_metres: int | None = Field(default=None, gt=0)
+
+
+class AllocationUpdate(BaseModel):
+    allocated_duration_seconds: int = Field(gt=0)
+    allocated_distance_metres: int | None = Field(default=None, gt=0)
+    expected_version: int = Field(gt=0)
+
+
 class AllocationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -43,7 +55,20 @@ class AllocationRead(BaseModel):
     allocated_duration_seconds: int
     allocated_distance_metres: int | None
     confirmation_source: str
+    version: int
     created_at: datetime
+
+
+class ActivityAllocationRead(BaseModel):
+    allocation: AllocationRead
+    planned_run: PlannedRunRead
+
+
+class ActivityReconciliationRead(BaseModel):
+    activity: CompletedActivityRead
+    allocations: list[ActivityAllocationRead]
+    unallocated_duration_seconds: int
+    unallocated_distance_metres: int | None
 
 
 class AllocationEvidenceRead(BaseModel):
