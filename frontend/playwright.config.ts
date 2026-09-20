@@ -15,6 +15,10 @@ process.env.TEMPO_PLAYWRIGHT_DATABASE_PATH = databasePath;
 export default defineConfig({
   testDir: "./tests",
   outputDir: resolve(testRoot, "artifacts"),
+  reporter: [
+    ["list"],
+    [resolve(import.meta.dirname, "cleanup-playwright-run.mjs")],
+  ],
   workers: 1,
   use: { baseURL, trace: "retain-on-failure" },
   webServer: {
