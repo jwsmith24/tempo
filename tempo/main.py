@@ -4,10 +4,12 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from tempo.activities.router import router as activities_router
 from tempo.planning.router import router as planning_router
 
 app = FastAPI(title="Tempo API", version="0.1.0")
 app.include_router(planning_router)
+app.include_router(activities_router)
 
 spa_directory = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 if spa_directory.is_dir():
