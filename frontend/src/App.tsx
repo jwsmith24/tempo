@@ -269,7 +269,7 @@ export function App() {
   const showingActivity = currentRoute !== "run" || activity !== null;
 
   return (
-    <main>
+    <main className="mx-auto w-[min(1040px,calc(100%-40px))] pb-20 max-[700px]:w-[min(100%-24px,600px)]">
       <header className="masthead">
         <a className="wordmark" href="/" aria-label="Tempo home">tempo</a>
         <nav aria-label="Primary">
@@ -313,7 +313,7 @@ function ImportForm({
   errors: Record<string, string>;
 }) {
   return (
-    <form className="run-form" onSubmit={onSubmit} noValidate>
+    <form className="surface-panel run-form" onSubmit={onSubmit} noValidate>
       <label>
         <span>Garmin FIT activity</span>
         <input name="file" type="file" accept=".fit,application/octet-stream" required aria-invalid={Boolean(errors.file)} aria-describedby={errors.file ? "fit-file-help fit-file-error" : "fit-file-help"} />
@@ -333,7 +333,7 @@ function ActivityForm({
   errors: Record<string, string>;
 }) {
   return (
-    <form className="run-form" onSubmit={onSubmit} noValidate>
+    <form className="surface-panel run-form" onSubmit={onSubmit} noValidate>
       <div className="field-grid">
         <label>
           <span>Modality</span>
@@ -412,7 +412,7 @@ function ActivityDetail({
   const provenance = activity.import_provenance;
   return (
     <>
-    <article className="run-detail">
+    <article className="surface-panel run-detail">
       <div className="detail-heading">
         <div><span className="label">Observed</span><strong>{activity.title || `${activity.modality} activity`}</strong></div>
         <span className={activity.reconciliation_status === "unmatched" ? "unmatched" : "revision"}>{activity.reconciliation_status === "allocated" ? "Reconciled" : activity.reconciliation_status === "partially_allocated" ? "Partly reconciled" : "Unmatched"}</span>
@@ -475,7 +475,7 @@ function RunForm({
   errors: Record<string, string>;
 }) {
   return (
-    <form className="run-form" onSubmit={onSubmit} noValidate>
+    <form className="surface-panel run-form" onSubmit={onSubmit} noValidate>
       <div className="field-grid">
         <label>
           <span>Local date</span>
@@ -528,7 +528,7 @@ function RunDetail({
   const revision = run.active_revision;
   return (
     <>
-    <article className="run-detail">
+    <article className="surface-panel run-detail">
       <div className="detail-heading">
         <div><span className="label">Scheduled</span><strong>{new Date(`${run.scheduled_date}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</strong></div>
         <span className="revision">Active revision {revision.revision_number}</span>
