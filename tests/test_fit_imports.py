@@ -67,7 +67,7 @@ def test_imports_and_revisits_garmin_run_with_provenance(
     assert activity["distance_metres"] == 158
     assert activity["entry_source"] == "fit_import"
     assert activity["creation_provenance"] == "fit_adapter"
-    assert activity["reconciliation_status"] == "unmatched"
+    assert activity["link_status"] == "unmatched"
     provenance = activity["import_provenance"]
     assert provenance["adapter_type"] == "garmin_fit"
     assert provenance["source_identity"] == "fit:garmin:fenix5:3945849289:2017-06-11T14:34:09+00:00"

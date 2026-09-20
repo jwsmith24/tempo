@@ -18,7 +18,7 @@ UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
 def activity_response(
-    activity: CompletedActivity, reconciliation_status: str = "unmatched"
+    activity: CompletedActivity, link_status: str = "unmatched"
 ) -> CompletedActivityRead:
     provenance = activity.import_provenance
     return CompletedActivityRead(
@@ -32,7 +32,7 @@ def activity_response(
         entry_source=activity.entry_source,
         creation_provenance=activity.creation_provenance,
         created_at=activity.created_at,
-        reconciliation_status=reconciliation_status,
+        link_status=link_status,
         import_provenance=(
             ImportProvenanceRead(
                 adapter_type=provenance.adapter_type,
@@ -50,18 +50,18 @@ def activity_response(
     )
 
 
-def activity_reconciliation_status(session: Session, activity_id: str) -> str:
-    from tempo.reconciliation.models import ReconciliationAllocation
+def activity_link_status(session: Session, activity_id: str) -> str:
+    from tempo.linking.models import Link
 
     activity = session.get(CompletedActivity, activity_id)
-    allocated = session.scalar(
-        select(func.coalesce(func.sum(ReconciliationAllocation.allocated_duration_seconds), 0)).where(
-            ReconciliationAllocation.completed_activity_id == activity_id
+    linked = session.scalar(
+        select(func.coalesce(func.sum(Link.linked_duration_seconds), 0)).where(
+            Link.completed_activity_id == activity_id
         )
     )
-    if activity is None or not allocated:
+    if activity is None or not linked:
         return "unmatched"
-    return "allocated" if allocated >= activity.duration_seconds else "partially_allocated"
+    return "linked" if linked >= activity.duration_seconds else "partly_linked"
 
 
 @router.post(
@@ -87,7 +87,7 @@ def create_manual_activity(
     session.add(activity)
     session.commit()
     session.refresh(activity)
-    return activity_response(activity, activity_reconciliation_status(session, activity.id))
+    return activity_response(activity, activity_link_status(session, activity.id))
 
 
 @router.post(
@@ -113,7 +113,7 @@ async def import_fit(
         activity = import_fit_activity(content, session)
     except FitImportError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return activity_response(activity, activity_reconciliation_status(session, activity.id))
+    return activity_response(activity, activity_link_status(session, activity.id))
 
 
 @router.get("", response_model=list[CompletedActivityRead], response_model_exclude_none=True)
@@ -126,7 +126,7 @@ def list_activities(session: Session = Depends(get_session)) -> list[CompletedAc
         reverse=True,
     )
     return [
-        activity_response(activity, activity_reconciliation_status(session, activity.id))
+        activity_response(activity, activity_link_status(session, activity.id))
         for activity in sorted_activities
     ]
 
@@ -140,4 +140,4 @@ def get_activity(
         raise HTTPException(status_code=404, detail="Completed Activity not found.")
     if activity.import_provenance is not None:
         ensure_raw_files(session)
-    return activity_response(activity, activity_reconciliation_status(session, activity.id))
+    return activity_response(activity, activity_link_status(session, activity.id))

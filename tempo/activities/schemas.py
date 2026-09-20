@@ -16,6 +16,12 @@ class ActivityEntrySource(StrEnum):
     fit_import = "fit_import"
 
 
+class ActivityLinkStatus(StrEnum):
+    unmatched = "unmatched"
+    partly_linked = "partly_linked"
+    linked = "linked"
+
+
 class ManualActivityCreate(BaseModel):
     modality: ActivityModality
     start_instant: datetime
@@ -56,5 +62,5 @@ class CompletedActivityRead(BaseModel):
     entry_source: ActivityEntrySource
     creation_provenance: str
     created_at: datetime
-    reconciliation_status: str = "unmatched"
+    link_status: ActivityLinkStatus = ActivityLinkStatus.unmatched
     import_provenance: ImportProvenanceRead | None = None

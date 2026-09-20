@@ -1,7 +1,7 @@
 from datetime import date, datetime
 
 from tempo.activities.models import CompletedActivity
-from tempo.reconciliation.service import candidate_sort_key, suggestion_reasons
+from tempo.linking.service import candidate_sort_key, suggestion_reasons
 
 
 def activity(activity_id: str, start: str) -> CompletedActivity:

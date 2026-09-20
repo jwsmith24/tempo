@@ -6,9 +6,10 @@ type PlannedRun = components["schemas"]["PlannedRunRead"];
 type ManualActivityCreate = components["schemas"]["ManualActivityCreate"];
 type CompletedActivity = components["schemas"]["CompletedActivityRead"];
 type ActivityMatchSuggestion = components["schemas"]["ActivityMatchSuggestionRead"];
-type ActivityReconciliation = components["schemas"]["ActivityReconciliationRead"];
-type ReconciliationEvidence = components["schemas"]["ReconciliationEvidenceRead"];
+type ActivityLinking = components["schemas"]["ActivityLinkingRead"];
+type LinkEvidence = components["schemas"]["LinkEvidenceRead"];
 type ValidationError = components["schemas"]["HTTPValidationError"];
+type ActivityLinkStatus = components["schemas"]["ActivityLinkStatus"];
 
 const intentLabels: Record<PlannedRunCreate["training_intent"], string> = {
   recovery: "Recovery",
@@ -16,6 +17,12 @@ const intentLabels: Record<PlannedRunCreate["training_intent"], string> = {
   threshold: "Threshold",
   power: "Power",
   assessment: "Assessment",
+};
+
+const linkStatusLabels: Record<ActivityLinkStatus, string> = {
+  unmatched: "Unmatched",
+  partly_linked: "Partly linked",
+  linked: "Linked",
 };
 
 function plannedRunId(): string | null {
@@ -65,9 +72,9 @@ export function App() {
   const [activity, setActivity] = useState<CompletedActivity | null>(null);
   const [activities, setActivities] = useState<CompletedActivity[]>([]);
   const [activitySuggestions, setActivitySuggestions] = useState<ActivityMatchSuggestion[]>([]);
-  const [activityReconciliation, setActivityReconciliation] = useState<ActivityReconciliation | null>(null);
+  const [activityLinking, setActivityLinking] = useState<ActivityLinking | null>(null);
   const [plannedRuns, setPlannedRuns] = useState<PlannedRun[]>([]);
-  const [evidence, setEvidence] = useState<ReconciliationEvidence | null>(null);
+  const [evidence, setEvidence] = useState<LinkEvidence | null>(null);
   const [loading, setLoading] = useState(Boolean(plannedRunId() || activityId() || currentRoute === "activity-list"));
   const [status, setStatus] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -89,13 +96,13 @@ export function App() {
         const result = await response.json();
         if (runId) {
           setRun(result as PlannedRun);
-          const evidenceResponse = await fetch(`/api/planned-runs/${runId}/reconciliation`);
-          if (!evidenceResponse.ok) throw new Error("Reconciliation evidence could not be loaded.");
-          setEvidence((await evidenceResponse.json()) as ReconciliationEvidence);
+          const evidenceResponse = await fetch(`/api/planned-runs/${runId}/linking`);
+          if (!evidenceResponse.ok) throw new Error("Link evidence could not be loaded.");
+          setEvidence((await evidenceResponse.json()) as LinkEvidence);
         }
         else if (completedActivityId) {
           setActivity(result as CompletedActivity);
-          await refreshActivityReconciliation(completedActivityId);
+          await refreshActivityLinking(completedActivityId);
         }
         else setActivities(result as CompletedActivity[]);
       })
@@ -187,7 +194,7 @@ export function App() {
     const created = (await response.json()) as CompletedActivity;
     window.history.pushState({}, "", `/activities/${created.id}`);
     setActivity(created);
-    if (await refreshActivityReconciliation(created.id)) {
+    if (await refreshActivityLinking(created.id)) {
       setStatus("Saved as unmatched training evidence. Review any suggested Planned Run match below.");
     }
   }
@@ -210,13 +217,13 @@ export function App() {
     const imported = (await response.json()) as CompletedActivity;
     window.history.pushState({}, "", `/activities/${imported.id}`);
     setActivity(imported);
-    if (await refreshActivityReconciliation(imported.id)) {
+    if (await refreshActivityLinking(imported.id)) {
       setStatus("Imported as unmatched training evidence. Review any suggested Planned Run match below.");
     }
   }
 
   async function refreshActivitySuggestions(completedActivityId: string): Promise<boolean> {
-    const response = await fetch(`/api/activities/${completedActivityId}/reconciliation/suggestions`);
+    const response = await fetch(`/api/activities/${completedActivityId}/linking/suggestions`);
     if (!response.ok) {
       setStatus("Planned Run suggestions could not be loaded.");
       return false;
@@ -225,18 +232,18 @@ export function App() {
     return true;
   }
 
-  async function refreshActivityReconciliation(completedActivityId: string): Promise<boolean> {
-    const [activityResponse, reconciliationResponse, plansResponse] = await Promise.all([
+  async function refreshActivityLinking(completedActivityId: string): Promise<boolean> {
+    const [activityResponse, linkingResponse, plansResponse] = await Promise.all([
       fetch(`/api/activities/${completedActivityId}`),
-      fetch(`/api/activities/${completedActivityId}/reconciliation`),
+      fetch(`/api/activities/${completedActivityId}/linking`),
       fetch("/api/planned-runs"),
     ]);
-    if (!activityResponse.ok || !reconciliationResponse.ok || !plansResponse.ok) {
-      setStatus("Reconciliation details could not be loaded.");
+    if (!activityResponse.ok || !linkingResponse.ok || !plansResponse.ok) {
+      setStatus("Linking details could not be loaded.");
       return false;
     }
     setActivity((await activityResponse.json()) as CompletedActivity);
-    setActivityReconciliation((await reconciliationResponse.json()) as ActivityReconciliation);
+    setActivityLinking((await linkingResponse.json()) as ActivityLinking);
     setPlannedRuns((await plansResponse.json()) as PlannedRun[]);
     return refreshActivitySuggestions(completedActivityId);
   }
@@ -244,7 +251,7 @@ export function App() {
   async function rejectSuggestion(plannedSessionId: string) {
     if (!activity) return;
     const response = await fetch(
-      `/api/planned-runs/${plannedSessionId}/reconciliation/suggestions/${activity.id}/reject`,
+      `/api/planned-runs/${plannedSessionId}/linking/suggestions/${activity.id}/reject`,
       { method: "POST" },
     );
     if (!response.ok) {
@@ -261,86 +268,86 @@ export function App() {
     if (!activity) return;
     setErrors({});
     const form = new FormData(event.currentTarget);
-    const duration = Number(form.get("allocated_duration_minutes"));
-    const distanceInput = String(form.get("allocated_distance_kilometres"));
+    const duration = Number(form.get("linked_duration_minutes"));
+    const distanceInput = String(form.get("linked_distance_kilometres"));
     const body = {
-      allocated_duration_seconds: Math.round(duration * 60),
-      allocated_distance_metres: distanceInput === "" ? null : Math.round(Number(distanceInput) * 1000),
+      linked_duration_seconds: Math.round(duration * 60),
+      linked_distance_metres: distanceInput === "" ? null : Math.round(Number(distanceInput) * 1000),
     };
     const response = await fetch(
-      `/api/planned-runs/${plannedSessionId}/reconciliation/suggestions/${activity.id}/confirm`,
+      `/api/planned-runs/${plannedSessionId}/linking/suggestions/${activity.id}/confirm`,
       { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
     );
     if (!response.ok) {
       const result = (await response.json()) as { detail?: unknown };
       const detail = result.detail;
-      const message = typeof detail === "string" ? detail : "Enter a positive allocation within the activity's remaining evidence.";
-      setErrors({ [`allocation-${plannedSessionId}`]: message });
-      setStatus("Reconciliation was not confirmed. Review the allocation.");
+      const message = typeof detail === "string" ? detail : "Enter positive linked amounts within the activity's remaining evidence.";
+      setErrors({ [`link-${plannedSessionId}`]: message });
+      setStatus("Link was not confirmed. Review the linked amount.");
       return;
     }
-    await refreshActivityReconciliation(activity.id);
-    setStatus("Reconciliation confirmed. Session Outcome remains not recorded.");
+    await refreshActivityLinking(activity.id);
+    setStatus("Link confirmed. Session Outcome remains not recorded.");
   }
 
-  function allocationBody(form: FormData) {
-    const duration = Number(form.get("allocated_duration_minutes"));
-    const distanceInput = String(form.get("allocated_distance_kilometres"));
+  function linkBody(form: FormData) {
+    const duration = Number(form.get("linked_duration_minutes"));
+    const distanceInput = String(form.get("linked_distance_kilometres"));
     return {
-      allocated_duration_seconds: Math.round(duration * 60),
-      allocated_distance_metres: distanceInput === "" ? null : Math.round(Number(distanceInput) * 1000),
+      linked_duration_seconds: Math.round(duration * 60),
+      linked_distance_metres: distanceInput === "" ? null : Math.round(Number(distanceInput) * 1000),
     };
   }
 
-  async function createDirectAllocation(event: FormEvent<HTMLFormElement>) {
+  async function createDirectLink(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!activity) return;
     setErrors({});
     const form = new FormData(event.currentTarget);
-    const response = await fetch(`/api/activities/${activity.id}/reconciliation/allocations`, {
+    const response = await fetch(`/api/activities/${activity.id}/linking/links`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ planned_session_id: String(form.get("planned_session_id")), ...allocationBody(form) }),
+      body: JSON.stringify({ planned_session_id: String(form.get("planned_session_id")), ...linkBody(form) }),
     });
     if (!response.ok) {
       const result = (await response.json()) as { detail?: unknown };
-      setErrors({ directAllocation: typeof result.detail === "string" ? result.detail : "Enter a positive allocation within the remaining evidence." });
-      setStatus("Direct allocation was not created. Review the allocation.");
+      setErrors({ directLink: typeof result.detail === "string" ? result.detail : "Enter positive linked amounts within the remaining evidence." });
+      setStatus("Direct link was not created. Review the linked amounts.");
       return;
     }
-    await refreshActivityReconciliation(activity.id);
-    setStatus("Direct allocation created. Remaining evidence stays visible.");
+    await refreshActivityLinking(activity.id);
+    setStatus("Direct link created. Remaining evidence stays visible.");
   }
 
-  async function updateDirectAllocation(event: FormEvent<HTMLFormElement>, allocationId: string, version: number) {
+  async function updateDirectLink(event: FormEvent<HTMLFormElement>, linkId: string, version: number) {
     event.preventDefault();
     if (!activity) return;
     setErrors({});
-    const response = await fetch(`/api/activities/${activity.id}/reconciliation/allocations/${allocationId}`, {
+    const response = await fetch(`/api/activities/${activity.id}/linking/links/${linkId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...allocationBody(new FormData(event.currentTarget)), expected_version: version }),
+      body: JSON.stringify({ ...linkBody(new FormData(event.currentTarget)), expected_version: version }),
     });
     if (!response.ok) {
       const result = (await response.json()) as { detail?: unknown };
-      setErrors({ [`edit-${allocationId}`]: typeof result.detail === "string" ? result.detail : "The allocation could not be updated." });
-      setStatus("Allocation was not updated. Review the allocation.");
+      setErrors({ [`edit-${linkId}`]: typeof result.detail === "string" ? result.detail : "The link could not be updated." });
+      setStatus("Link was not updated. Review the linked amounts.");
       return;
     }
-    await refreshActivityReconciliation(activity.id);
-    setStatus("Allocation updated. Remaining evidence recalculated.");
+    await refreshActivityLinking(activity.id);
+    setStatus("Link updated. Remaining evidence recalculated.");
   }
 
-  async function removeDirectAllocation(allocationId: string, version: number) {
+  async function removeDirectLink(linkId: string, version: number) {
     if (!activity) return;
-    const response = await fetch(`/api/activities/${activity.id}/reconciliation/allocations/${allocationId}?expected_version=${version}`, { method: "DELETE" });
+    const response = await fetch(`/api/activities/${activity.id}/linking/links/${linkId}?expected_version=${version}`, { method: "DELETE" });
     if (!response.ok) {
       const result = (await response.json()) as { detail?: string };
-      setStatus(result.detail || "Allocation could not be removed.");
+      setStatus(result.detail || "Link could not be removed.");
       return;
     }
-    await refreshActivityReconciliation(activity.id);
-    setStatus("Allocation removed. The observed evidence remains in the local record.");
+    await refreshActivityLinking(activity.id);
+    setStatus("Link removed. The observed evidence remains in the local record.");
   }
 
   const showingActivity = currentRoute !== "run" || activity !== null;
@@ -362,9 +369,9 @@ export function App() {
         <h1>{activity ? "Completed Activity" : currentRoute === "activity-list" ? "Observed work." : currentRoute === "activity-new" ? "Record what happened." : currentRoute === "activity-import" ? "Import observed work." : run ? "Planned Run" : "Set the intention."}</h1>
         <p className="lede">
           {activity
-            ? activity.reconciliation_status !== "unmatched"
-              ? "This observed training evidence has an explicit confirmed Reconciliation allocation; any remaining evidence stays visible."
-              : "This is observed training evidence. It remains unmatched until you explicitly reconcile it later."
+            ? activity.link_status !== "unmatched"
+              ? "This observed training evidence has an explicit confirmed Link; any remaining evidence stays visible."
+              : "This is observed training evidence. It remains unmatched until you explicitly link it later."
             : currentRoute === "activity-list"
               ? "Manual training evidence remains legitimate whether or not it matches a Planned Session."
               : currentRoute === "activity-new"
@@ -377,7 +384,7 @@ export function App() {
         </p>
       </section>
       <p className="status" role="status" aria-live="polite">{loading ? "Loading local record..." : status}</p>
-      {activity ? <ActivityDetail activity={activity} suggestions={activitySuggestions} reconciliation={activityReconciliation} plannedRuns={plannedRuns} errors={errors} onReject={rejectSuggestion} onConfirm={confirmSuggestion} onCreateDirect={createDirectAllocation} onUpdate={updateDirectAllocation} onRemove={removeDirectAllocation} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : currentRoute === "activity-import" ? <ImportForm onSubmit={importActivity} errors={errors} /> : run ? <RunDetail run={run} evidence={evidence} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
+      {activity ? <ActivityDetail activity={activity} suggestions={activitySuggestions} linking={activityLinking} plannedRuns={plannedRuns} errors={errors} onReject={rejectSuggestion} onConfirm={confirmSuggestion} onCreateDirect={createDirectLink} onUpdate={updateDirectLink} onRemove={removeDirectLink} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : currentRoute === "activity-import" ? <ImportForm onSubmit={importActivity} errors={errors} /> : run ? <RunDetail run={run} evidence={evidence} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
     </main>
   );
 }
@@ -466,7 +473,7 @@ function ActivityList({ activities }: { activities: CompletedActivity[] }) {
       {activities.map((activity) => (
         <a href={`/activities/${activity.id}`} key={activity.id}>
           <span><b>{activity.title || `${activity.modality} activity`}</b><small>{new Date(activity.start_instant).toLocaleString()}</small></span>
-          <span className={activity.reconciliation_status === "unmatched" ? "unmatched" : "revision"}>{activity.reconciliation_status === "allocated" ? "Reconciled" : activity.reconciliation_status === "partially_allocated" ? "Partly reconciled" : "Unmatched"}</span>
+          <span className={activity.link_status === "unmatched" ? "unmatched" : "revision"}>{linkStatusLabels[activity.link_status]}</span>
         </a>
       ))}
     </section>
@@ -476,7 +483,7 @@ function ActivityList({ activities }: { activities: CompletedActivity[] }) {
 function ActivityDetail({
   activity,
   suggestions,
-  reconciliation,
+  linking,
   plannedRuns,
   errors,
   onReject,
@@ -487,14 +494,14 @@ function ActivityDetail({
 }: {
   activity: CompletedActivity;
   suggestions: ActivityMatchSuggestion[];
-  reconciliation: ActivityReconciliation | null;
+  linking: ActivityLinking | null;
   plannedRuns: PlannedRun[];
   errors: Record<string, string>;
   onReject: (plannedSessionId: string) => void;
   onConfirm: (event: FormEvent<HTMLFormElement>, plannedSessionId: string) => void;
   onCreateDirect: (event: FormEvent<HTMLFormElement>) => void;
-  onUpdate: (event: FormEvent<HTMLFormElement>, allocationId: string, version: number) => void;
-  onRemove: (allocationId: string, version: number) => void;
+  onUpdate: (event: FormEvent<HTMLFormElement>, linkId: string, version: number) => void;
+  onRemove: (linkId: string, version: number) => void;
 }) {
   const provenance = activity.import_provenance;
   return (
@@ -502,7 +509,7 @@ function ActivityDetail({
     <article className="surface-panel run-detail">
       <div className="detail-heading">
         <div><span className="label">Observed</span><strong>{activity.title || `${activity.modality} activity`}</strong></div>
-        <span className={activity.reconciliation_status === "unmatched" ? "unmatched" : "revision"}>{activity.reconciliation_status === "allocated" ? "Reconciled" : activity.reconciliation_status === "partially_allocated" ? "Partly reconciled" : "Unmatched"}</span>
+        <span className={activity.link_status === "unmatched" ? "unmatched" : "revision"}>{linkStatusLabels[activity.link_status]}</span>
       </div>
       <dl>
         <div><dt>Modality</dt><dd>{activity.modality}</dd></div>
@@ -527,60 +534,60 @@ function ActivityDetail({
       </dl></div>}
       <footer><span>{provenance ? "Source: Garmin FIT import" : "Source: manual / Created by athlete entry"}</span><code>{activity.id}</code></footer>
     </article>
-    {reconciliation && (
-      <section className="reconciliation-panel confirmed-panel" aria-label="Direct Reconciliation allocations">
-        <div className="section-heading"><div><span className="revision">Confirmed allocations</span><h2>Allocate observed evidence</h2></div></div>
-        <p>{formatDuration(reconciliation.unallocated_duration_seconds)} unallocated{reconciliation.unallocated_distance_metres === null ? "" : ` / ${reconciliation.unallocated_distance_metres / 1000} km unallocated`}</p>
-        {reconciliation.allocations.map(({ allocation, planned_run: plannedRun }) => {
+    {linking && (
+      <section className="linking-panel confirmed-panel" aria-label="Confirmed Links">
+        <div className="section-heading"><div><span className="revision">Confirmed Links</span><h2>Link observed evidence</h2></div></div>
+        <p>{formatDuration(linking.remaining_duration_seconds)} remaining{linking.remaining_distance_metres === null ? "" : ` / ${linking.remaining_distance_metres / 1000} km remaining`}</p>
+        {linking.links.map(({ link, planned_run: plannedRun }) => {
           const label = `${intentLabels[plannedRun.training_intent]} on ${plannedRun.scheduled_date}`;
-          const allocationError = errors[`edit-${allocation.id}`];
-          const errorId = `edit-allocation-error-${allocation.id}`;
+          const linkError = errors[`edit-${link.id}`];
+          const errorId = `edit-link-error-${link.id}`;
           return (
-            <form className="suggestion-card" aria-label={`Allocation to ${label}`} key={allocation.id} onSubmit={(event) => onUpdate(event, allocation.id, allocation.version)}>
-              <div><strong>{label}</strong><small>{allocation.confirmation_source === "direct" ? "Direct allocation" : "Confirmed suggestion"}</small></div>
-              <div className="allocation-fields">
-                <label><span>Allocated duration</span><span className="unit-input"><input name="allocated_duration_minutes" type="number" min="0.0167" step="any" required defaultValue={allocation.allocated_duration_seconds / 60} aria-invalid={Boolean(allocationError)} aria-describedby={allocationError ? errorId : undefined} /><b>min</b></span></label>
-                <label><span>Allocated distance <i>Optional</i></span><span className="unit-input"><input name="allocated_distance_kilometres" type="number" min="0.001" step="any" defaultValue={allocation.allocated_distance_metres === null ? "" : allocation.allocated_distance_metres / 1000} aria-invalid={Boolean(allocationError)} aria-describedby={allocationError ? errorId : undefined} /><b>km</b></span></label>
+            <form className="suggestion-card" aria-label={`Link to ${label}`} key={link.id} onSubmit={(event) => onUpdate(event, link.id, link.version)}>
+              <div><strong>{label}</strong><small>{link.confirmation_source === "direct" ? "Direct Link" : "Confirmed suggestion"}</small></div>
+              <div className="link-fields">
+                 <label><span>Linked duration</span><span className="unit-input"><input name="linked_duration_minutes" type="number" min="0.0167" step="any" required defaultValue={link.linked_duration_seconds / 60} aria-invalid={Boolean(linkError)} aria-describedby={linkError ? errorId : undefined} /><b>min</b></span></label>
+                 <label><span>Linked distance <i>Optional</i></span><span className="unit-input"><input name="linked_distance_kilometres" type="number" min="0.001" step="any" defaultValue={link.linked_distance_metres === null ? "" : link.linked_distance_metres / 1000} aria-invalid={Boolean(linkError)} aria-describedby={linkError ? errorId : undefined} /><b>km</b></span></label>
               </div>
-              {allocationError && <small className="error" id={errorId}>{allocationError}</small>}
-              <div className="suggestion-actions"><button type="button" className="secondary-button" onClick={() => onRemove(allocation.id, allocation.version)}>Remove allocation</button><button type="submit">Save allocation</button></div>
+              {linkError && <small className="error" id={errorId}>{linkError}</small>}
+              <div className="suggestion-actions"><button type="button" className="secondary-button" onClick={() => onRemove(link.id, link.version)}>Remove Link</button><button type="submit">Save Link</button></div>
             </form>
           );
         })}
-        <form className="suggestion-card" aria-label="Create direct allocation" onSubmit={onCreateDirect}>
+        <form className="suggestion-card" aria-label="Create direct Link" onSubmit={onCreateDirect}>
           <label><span>Planned Run</span><select name="planned_session_id" required defaultValue=""><option value="" disabled>Choose a Planned Run</option>{plannedRuns.map((plannedRun) => <option key={plannedRun.id} value={plannedRun.id}>{intentLabels[plannedRun.training_intent]} on {plannedRun.scheduled_date}</option>)}</select></label>
-          <div className="allocation-fields">
-            <label><span>Allocated duration</span><span className="unit-input"><input name="allocated_duration_minutes" type="number" min="0.0167" step="any" required defaultValue={reconciliation.unallocated_duration_seconds / 60} aria-invalid={Boolean(errors.directAllocation)} aria-describedby={errors.directAllocation ? "direct-allocation-error" : undefined} /><b>min</b></span></label>
-            <label><span>Allocated distance <i>Optional</i></span><span className="unit-input"><input name="allocated_distance_kilometres" type="number" min="0.001" step="any" defaultValue={reconciliation.unallocated_distance_metres === null ? "" : reconciliation.unallocated_distance_metres / 1000} aria-invalid={Boolean(errors.directAllocation)} aria-describedby={errors.directAllocation ? "direct-allocation-error" : undefined} /><b>km</b></span></label>
+          <div className="link-fields">
+             <label><span>Linked duration</span><span className="unit-input"><input name="linked_duration_minutes" type="number" min="0.0167" step="any" required defaultValue={linking.remaining_duration_seconds / 60} aria-invalid={Boolean(errors.directLink)} aria-describedby={errors.directLink ? "direct-link-error" : undefined} /><b>min</b></span></label>
+             <label><span>Linked distance <i>Optional</i></span><span className="unit-input"><input name="linked_distance_kilometres" type="number" min="0.001" step="any" defaultValue={linking.remaining_distance_metres === null ? "" : linking.remaining_distance_metres / 1000} aria-invalid={Boolean(errors.directLink)} aria-describedby={errors.directLink ? "direct-link-error" : undefined} /><b>km</b></span></label>
           </div>
-          {errors.directAllocation && <small className="error" id="direct-allocation-error">{errors.directAllocation}</small>}
-          <button type="submit">Create allocation</button>
+          {errors.directLink && <small className="error" id="direct-link-error">{errors.directLink}</small>}
+          <button type="submit">Create Link</button>
         </form>
       </section>
     )}
     {suggestions.length > 0 ? (
-      <section className="reconciliation-panel" aria-label="Suggested Planned Run matches">
+      <section className="linking-panel" aria-label="Suggested Planned Run matches">
         <div className="section-heading"><div><span className="pending-badge">Pending suggestion</span><h2>Match this activity to a plan</h2></div><code>{suggestions[0].algorithm_version}</code></div>
         {suggestions.map((suggestion) => {
           const plannedRun = suggestion.planned_run;
-          const allocationError = errors[`allocation-${plannedRun.id}`];
-          const errorId = `allocation-error-${plannedRun.id}`;
+          const linkError = errors[`link-${plannedRun.id}`];
+          const errorId = `link-error-${plannedRun.id}`;
           const suggestionLabel = `${intentLabels[plannedRun.training_intent]} on ${plannedRun.scheduled_date}`;
           return (
             <form className="suggestion-card" aria-label={`Suggestion for ${suggestionLabel}`} key={plannedRun.id} onSubmit={(event) => onConfirm(event, plannedRun.id)}>
               <div><strong>{suggestionLabel}</strong><small>{formatDuration(plannedRun.active_revision.duration_seconds)} planned{plannedRun.active_revision.distance_metres === null ? "" : ` / ${plannedRun.active_revision.distance_metres / 1000} km`}</small></div>
               <ul>{suggestion.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
-              <div className="allocation-fields">
-                <label><span>Allocated duration</span><span className="unit-input"><input name="allocated_duration_minutes" type="number" min="0.0167" step="any" required defaultValue={suggestion.proposed_duration_seconds / 60} aria-invalid={Boolean(allocationError)} aria-describedby={allocationError ? errorId : undefined} /><b>min</b></span></label>
-                <label><span>Allocated distance <i>Optional</i></span><span className="unit-input"><input name="allocated_distance_kilometres" type="number" min="0.001" step="any" defaultValue={suggestion.proposed_distance_metres === null ? "" : suggestion.proposed_distance_metres / 1000} aria-invalid={Boolean(allocationError)} aria-describedby={allocationError ? errorId : undefined} /><b>km</b></span></label>
+              <div className="link-fields">
+                 <label><span>Linked duration</span><span className="unit-input"><input name="linked_duration_minutes" type="number" min="0.0167" step="any" required defaultValue={suggestion.proposed_duration_seconds / 60} aria-invalid={Boolean(linkError)} aria-describedby={linkError ? errorId : undefined} /><b>min</b></span></label>
+                 <label><span>Linked distance <i>Optional</i></span><span className="unit-input"><input name="linked_distance_kilometres" type="number" min="0.001" step="any" defaultValue={suggestion.proposed_distance_metres === null ? "" : suggestion.proposed_distance_metres / 1000} aria-invalid={Boolean(linkError)} aria-describedby={linkError ? errorId : undefined} /><b>km</b></span></label>
               </div>
-              {allocationError && <small className="error" id={errorId}>{allocationError}</small>}
-              <div className="suggestion-actions"><button type="button" className="secondary-button" onClick={() => onReject(plannedRun.id)}>Reject suggestion</button><button type="submit">Confirm Reconciliation</button></div>
+              {linkError && <small className="error" id={errorId}>{linkError}</small>}
+              <div className="suggestion-actions"><button type="button" className="secondary-button" onClick={() => onReject(plannedRun.id)}>Reject suggestion</button><button type="submit">Confirm Link</button></div>
             </form>
           );
         })}
       </section>
-    ) : activity.reconciliation_status === "unmatched" ? <p className="empty-state">No compatible Planned Run suggestions.</p> : <p className="outcome-state">This activity has a confirmed Reconciliation. Open its Planned Run to review planned-versus-actual evidence.</p>}
+    ) : activity.link_status === "unmatched" ? <p className="empty-state">No compatible Planned Run suggestions.</p> : <p className="outcome-state">This activity has a confirmed Link. Open its Planned Run to review planned-versus-actual evidence.</p>}
     </>
   );
 }
@@ -641,7 +648,7 @@ function RunDetail({
   evidence,
 }: {
   run: PlannedRun;
-  evidence: ReconciliationEvidence | null;
+  evidence: LinkEvidence | null;
 }) {
   const revision = run.active_revision;
   return (
@@ -660,16 +667,16 @@ function RunDetail({
       {run.notes && <div className="notes"><span className="label">Notes</span><p>{run.notes}</p></div>}
       <footer><span>Created by athlete entry</span><code>{run.id}</code></footer>
     </article>
-    {evidence && evidence.allocations.length === 0 && <p className="outcome-state">Session Outcome: not recorded</p>}
-    {evidence && evidence.allocations.length > 0 && (
-      <section className="reconciliation-panel confirmed-panel" aria-label="Confirmed Reconciliation">
-        <div className="section-heading"><div><span className="revision">Confirmed Reconciliation</span><h2>Planned versus actual</h2></div></div>
-        {evidence.allocations.map((item) => (
-          <article className="evidence-card" key={item.allocation.id}>
+    {evidence && evidence.links.length === 0 && <p className="outcome-state">Session Outcome: not recorded</p>}
+    {evidence && evidence.links.length > 0 && (
+      <section className="linking-panel confirmed-panel" aria-label="Confirmed Links">
+        <div className="section-heading"><div><span className="revision">Confirmed Links</span><h2>Planned versus actual</h2></div></div>
+        {evidence.links.map((item) => (
+          <article className="evidence-card" key={item.link.id}>
             <h3>{item.activity.title || "Running activity"}</h3>
             <dl>
-              <div><dt>Allocated duration</dt><dd>{formatDuration(item.allocation.allocated_duration_seconds)}</dd></div>
-              <div><dt>Allocated distance</dt><dd>{item.allocation.allocated_distance_metres === null ? "Not allocated" : `${item.allocation.allocated_distance_metres / 1000} km`}</dd></div>
+               <div><dt>Linked duration</dt><dd>{formatDuration(item.link.linked_duration_seconds)}</dd></div>
+               <div><dt>Linked distance</dt><dd>{item.link.linked_distance_metres === null ? "Not linked" : `${item.link.linked_distance_metres / 1000} km`}</dd></div>
               <div><dt>Unmatched duration</dt><dd>{formatDuration(item.unmatched_duration_seconds)}</dd></div>
               <div><dt>Unmatched distance</dt><dd>{item.unmatched_distance_metres === null ? "Not recorded" : `${item.unmatched_distance_metres / 1000} km`}</dd></div>
               <div><dt>Duration difference</dt><dd>{formatDifference(evidence.duration_difference_seconds, "seconds")}</dd></div>

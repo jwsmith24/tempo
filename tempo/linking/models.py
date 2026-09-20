@@ -7,24 +7,24 @@ from tempo.database import Base
 from tempo.planning.models import UTCInstant, new_id
 
 
-class ReconciliationAllocation(Base):
-    __tablename__ = "reconciliation_allocations"
+class Link(Base):
+    __tablename__ = "links"
     __table_args__ = (
-        CheckConstraint("allocated_duration_seconds > 0", name="ck_allocation_positive_duration"),
+        CheckConstraint("linked_duration_seconds > 0", name="ck_link_positive_duration"),
         CheckConstraint(
-            "allocated_distance_metres IS NULL OR allocated_distance_metres > 0",
-            name="ck_allocation_positive_distance",
+            "linked_distance_metres IS NULL OR linked_distance_metres > 0",
+            name="ck_link_positive_distance",
         ),
         CheckConstraint(
             "confirmation_source IN ('suggestion', 'direct')",
-            name="ck_allocation_confirmation_source",
+            name="ck_link_confirmation_source",
         ),
-        CheckConstraint("version > 0", name="ck_allocation_positive_version"),
+        CheckConstraint("version > 0", name="ck_link_positive_version"),
         UniqueConstraint(
-            "planned_session_id", "completed_activity_id", name="uq_reconciliation_pair"
+            "planned_session_id", "completed_activity_id", name="uq_link_pair"
         ),
-        Index("ix_reconciliation_planned_session", "planned_session_id"),
-        Index("ix_reconciliation_completed_activity", "completed_activity_id"),
+        Index("ix_link_planned_session", "planned_session_id"),
+        Index("ix_link_completed_activity", "completed_activity_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -34,8 +34,8 @@ class ReconciliationAllocation(Base):
     completed_activity_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("completed_activities.id", ondelete="CASCADE")
     )
-    allocated_duration_seconds: Mapped[int] = mapped_column(Integer)
-    allocated_distance_metres: Mapped[int | None] = mapped_column(Integer)
+    linked_duration_seconds: Mapped[int] = mapped_column(Integer)
+    linked_distance_metres: Mapped[int | None] = mapped_column(Integer)
     confirmation_source: Mapped[str] = mapped_column(String(32))
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(UTCInstant())

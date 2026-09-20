@@ -29,7 +29,7 @@ A controlled shared purpose such as recovery, aerobic base, threshold, power, st
 _Avoid_: Free-form workout name
 
 **Benchmark**:
-A durable performance result derived from a Planned Session with assessment intent and its reconciled evidence.
+A durable performance result derived from a Planned Session with assessment intent and its linked evidence.
 _Avoid_: Automatically detected personal record
 
 ## Evidence Language
@@ -38,9 +38,9 @@ _Avoid_: Automatically detected personal record
 Observed training evidence imported from a source or entered manually. It may be planned, unplanned, split across recordings, or combined with other work.
 _Avoid_: Planned Session, workout
 
-**Reconciliation**:
-The explicit many-to-many allocation between Planned Sessions and Completed Activities used to assess what work fulfilled which intent.
-_Avoid_: Date match, automatic completion
+**Link**:
+An explicit many-to-many connection between Planned Sessions and Completed Activities, including the linked duration and optional linked distance attributed to that connection.
+_Avoid_: Reconciliation, date match, automatic completion
 
 **Session Outcome**:
 The athlete-confirmed disposition of planned work: completed, modified, rescheduled, intentionally skipped, unintentionally missed, or replaced, with an optional reason.

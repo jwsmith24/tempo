@@ -91,7 +91,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/planned-runs/{planned_session_id}/reconciliation/suggestions": {
+    "/api/planned-runs/{planned_session_id}/linking/suggestions": {
         parameters: {
             query?: never;
             header?: never;
@@ -99,7 +99,7 @@ export interface paths {
             cookie?: never;
         };
         /** Get Suggestions */
-        get: operations["get_suggestions_api_planned_runs__planned_session_id__reconciliation_suggestions_get"];
+        get: operations["get_suggestions_api_planned_runs__planned_session_id__linking_suggestions_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -108,7 +108,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/planned-runs/{planned_session_id}/reconciliation/suggestions/{activity_id}/reject": {
+    "/api/planned-runs/{planned_session_id}/linking/suggestions/{activity_id}/reject": {
         parameters: {
             query?: never;
             header?: never;
@@ -118,14 +118,14 @@ export interface paths {
         get?: never;
         put?: never;
         /** Reject Match Suggestion */
-        post: operations["reject_match_suggestion_api_planned_runs__planned_session_id__reconciliation_suggestions__activity_id__reject_post"];
+        post: operations["reject_match_suggestion_api_planned_runs__planned_session_id__linking_suggestions__activity_id__reject_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/planned-runs/{planned_session_id}/reconciliation/suggestions/{activity_id}/confirm": {
+    "/api/planned-runs/{planned_session_id}/linking/suggestions/{activity_id}/confirm": {
         parameters: {
             query?: never;
             header?: never;
@@ -135,22 +135,22 @@ export interface paths {
         get?: never;
         put?: never;
         /** Confirm Match Suggestion */
-        post: operations["confirm_match_suggestion_api_planned_runs__planned_session_id__reconciliation_suggestions__activity_id__confirm_post"];
+        post: operations["confirm_match_suggestion_api_planned_runs__planned_session_id__linking_suggestions__activity_id__confirm_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/planned-runs/{planned_session_id}/reconciliation": {
+    "/api/planned-runs/{planned_session_id}/linking": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Reconciliation Evidence */
-        get: operations["get_reconciliation_evidence_api_planned_runs__planned_session_id__reconciliation_get"];
+        /** Get Link Evidence */
+        get: operations["get_link_evidence_api_planned_runs__planned_session_id__linking_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -159,7 +159,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/activities/{activity_id}/reconciliation/suggestions": {
+    "/api/activities/{activity_id}/linking/suggestions": {
         parameters: {
             query?: never;
             header?: never;
@@ -167,7 +167,7 @@ export interface paths {
             cookie?: never;
         };
         /** Get Activity Suggestions */
-        get: operations["get_activity_suggestions_api_activities__activity_id__reconciliation_suggestions_get"];
+        get: operations["get_activity_suggestions_api_activities__activity_id__linking_suggestions_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -176,15 +176,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/activities/{activity_id}/reconciliation": {
+    "/api/activities/{activity_id}/linking": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Activity Reconciliation */
-        get: operations["get_activity_reconciliation_api_activities__activity_id__reconciliation_get"];
+        /** Get Activity Linking */
+        get: operations["get_activity_linking_api_activities__activity_id__linking_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -193,24 +193,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/activities/{activity_id}/reconciliation/allocations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Direct Allocation */
-        post: operations["create_direct_allocation_api_activities__activity_id__reconciliation_allocations_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/activities/{activity_id}/reconciliation/allocations/{allocation_id}": {
+    "/api/activities/{activity_id}/linking/links": {
         parameters: {
             query?: never;
             header?: never;
@@ -218,11 +201,28 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Adjust Allocation */
-        put: operations["adjust_allocation_api_activities__activity_id__reconciliation_allocations__allocation_id__put"];
+        put?: never;
+        /** Create Direct Link */
+        post: operations["create_direct_link_api_activities__activity_id__linking_links_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/activities/{activity_id}/linking/links/{link_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Adjust Link */
+        put: operations["adjust_link_api_activities__activity_id__linking_links__link_id__put"];
         post?: never;
-        /** Delete Allocation */
-        delete: operations["delete_allocation_api_activities__activity_id__reconciliation_allocations__allocation_id__delete"];
+        /** Delete Link */
+        delete: operations["delete_link_api_activities__activity_id__linking_links__link_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -232,16 +232,31 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** ActivityAllocationRead */
-        ActivityAllocationRead: {
-            allocation: components["schemas"]["AllocationRead"];
-            planned_run: components["schemas"]["PlannedRunRead"];
-        };
         /**
          * ActivityEntrySource
          * @enum {string}
          */
         ActivityEntrySource: "manual" | "fit_import";
+        /** ActivityLinkRead */
+        ActivityLinkRead: {
+            link: components["schemas"]["LinkRead"];
+            planned_run: components["schemas"]["PlannedRunRead"];
+        };
+        /**
+         * ActivityLinkStatus
+         * @enum {string}
+         */
+        ActivityLinkStatus: "unmatched" | "partly_linked" | "linked";
+        /** ActivityLinkingRead */
+        ActivityLinkingRead: {
+            activity: components["schemas"]["CompletedActivityRead"];
+            /** Links */
+            links: components["schemas"]["ActivityLinkRead"][];
+            /** Remaining Duration Seconds */
+            remaining_duration_seconds: number;
+            /** Remaining Distance Metres */
+            remaining_distance_metres: number | null;
+        };
         /** ActivityMatchSuggestionRead */
         ActivityMatchSuggestionRead: {
             /** Activity Id */
@@ -261,56 +276,6 @@ export interface components {
          * @enum {string}
          */
         ActivityModality: "running" | "cycling" | "strength" | "other";
-        /** ActivityReconciliationRead */
-        ActivityReconciliationRead: {
-            activity: components["schemas"]["CompletedActivityRead"];
-            /** Allocations */
-            allocations: components["schemas"]["ActivityAllocationRead"][];
-            /** Unallocated Duration Seconds */
-            unallocated_duration_seconds: number;
-            /** Unallocated Distance Metres */
-            unallocated_distance_metres: number | null;
-        };
-        /** AllocationEvidenceRead */
-        AllocationEvidenceRead: {
-            allocation: components["schemas"]["AllocationRead"];
-            activity: components["schemas"]["CompletedActivityRead"];
-            /** Unmatched Duration Seconds */
-            unmatched_duration_seconds: number;
-            /** Unmatched Distance Metres */
-            unmatched_distance_metres: number | null;
-        };
-        /** AllocationRead */
-        AllocationRead: {
-            /** Id */
-            id: string;
-            /** Planned Session Id */
-            planned_session_id: string;
-            /** Completed Activity Id */
-            completed_activity_id: string;
-            /** Allocated Duration Seconds */
-            allocated_duration_seconds: number;
-            /** Allocated Distance Metres */
-            allocated_distance_metres: number | null;
-            /** Confirmation Source */
-            confirmation_source: string;
-            /** Version */
-            version: number;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-        };
-        /** AllocationUpdate */
-        AllocationUpdate: {
-            /** Allocated Duration Seconds */
-            allocated_duration_seconds: number;
-            /** Allocated Distance Metres */
-            allocated_distance_metres?: number | null;
-            /** Expected Version */
-            expected_version: number;
-        };
         /** Body_import_fit_api_activities_imports_fit_post */
         Body_import_fit_api_activities_imports_fit_post: {
             /**
@@ -345,21 +310,18 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            /**
-             * Reconciliation Status
-             * @default unmatched
-             */
-            reconciliation_status: string;
+            /** @default unmatched */
+            link_status: components["schemas"]["ActivityLinkStatus"];
             import_provenance?: components["schemas"]["ImportProvenanceRead"] | null;
         };
-        /** DirectAllocationCreate */
-        DirectAllocationCreate: {
+        /** DirectLinkCreate */
+        DirectLinkCreate: {
             /** Planned Session Id */
             planned_session_id: string;
-            /** Allocated Duration Seconds */
-            allocated_duration_seconds: number;
-            /** Allocated Distance Metres */
-            allocated_distance_metres?: number | null;
+            /** Linked Duration Seconds */
+            linked_duration_seconds: number;
+            /** Linked Distance Metres */
+            linked_distance_metres?: number | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -389,6 +351,62 @@ export interface components {
             original_normalized_values: {
                 [key: string]: string | number | null;
             };
+        };
+        /** LinkActivityEvidenceRead */
+        LinkActivityEvidenceRead: {
+            link: components["schemas"]["LinkRead"];
+            activity: components["schemas"]["CompletedActivityRead"];
+            /** Unmatched Duration Seconds */
+            unmatched_duration_seconds: number;
+            /** Unmatched Distance Metres */
+            unmatched_distance_metres: number | null;
+        };
+        /** LinkEvidenceRead */
+        LinkEvidenceRead: {
+            planned_run: components["schemas"]["PlannedRunRead"];
+            /** Links */
+            links: components["schemas"]["LinkActivityEvidenceRead"][];
+            /** Total Linked Duration Seconds */
+            total_linked_duration_seconds: number;
+            /** Total Linked Distance Metres */
+            total_linked_distance_metres: number | null;
+            /** Duration Difference Seconds */
+            duration_difference_seconds: number | null;
+            /** Distance Difference Metres */
+            distance_difference_metres: number | null;
+            /** Session Outcome */
+            session_outcome?: null;
+        };
+        /** LinkRead */
+        LinkRead: {
+            /** Id */
+            id: string;
+            /** Planned Session Id */
+            planned_session_id: string;
+            /** Completed Activity Id */
+            completed_activity_id: string;
+            /** Linked Duration Seconds */
+            linked_duration_seconds: number;
+            /** Linked Distance Metres */
+            linked_distance_metres: number | null;
+            /** Confirmation Source */
+            confirmation_source: string;
+            /** Version */
+            version: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** LinkUpdate */
+        LinkUpdate: {
+            /** Linked Duration Seconds */
+            linked_duration_seconds: number;
+            /** Linked Distance Metres */
+            linked_distance_metres?: number | null;
+            /** Expected Version */
+            expected_version: number;
         };
         /** ManualActivityCreate */
         ManualActivityCreate: {
@@ -487,28 +505,12 @@ export interface components {
          * @enum {string}
          */
         Priority: "low" | "normal" | "high";
-        /** ReconciliationEvidenceRead */
-        ReconciliationEvidenceRead: {
-            planned_run: components["schemas"]["PlannedRunRead"];
-            /** Allocations */
-            allocations: components["schemas"]["AllocationEvidenceRead"][];
-            /** Allocated Duration Seconds */
-            allocated_duration_seconds: number;
-            /** Allocated Distance Metres */
-            allocated_distance_metres: number | null;
-            /** Duration Difference Seconds */
-            duration_difference_seconds: number | null;
-            /** Distance Difference Metres */
-            distance_difference_metres: number | null;
-            /** Session Outcome */
-            session_outcome?: null;
-        };
         /** SuggestionConfirm */
         SuggestionConfirm: {
-            /** Allocated Duration Seconds */
-            allocated_duration_seconds?: number | null;
-            /** Allocated Distance Metres */
-            allocated_distance_metres?: number | null;
+            /** Linked Duration Seconds */
+            linked_duration_seconds?: number | null;
+            /** Linked Distance Metres */
+            linked_distance_metres?: number | null;
         };
         /** SuggestionDecisionRead */
         SuggestionDecisionRead: {
@@ -739,7 +741,7 @@ export interface operations {
             };
         };
     };
-    get_suggestions_api_planned_runs__planned_session_id__reconciliation_suggestions_get: {
+    get_suggestions_api_planned_runs__planned_session_id__linking_suggestions_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -770,7 +772,7 @@ export interface operations {
             };
         };
     };
-    reject_match_suggestion_api_planned_runs__planned_session_id__reconciliation_suggestions__activity_id__reject_post: {
+    reject_match_suggestion_api_planned_runs__planned_session_id__linking_suggestions__activity_id__reject_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -802,7 +804,7 @@ export interface operations {
             };
         };
     };
-    confirm_match_suggestion_api_planned_runs__planned_session_id__reconciliation_suggestions__activity_id__confirm_post: {
+    confirm_match_suggestion_api_planned_runs__planned_session_id__linking_suggestions__activity_id__confirm_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -824,7 +826,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AllocationRead"];
+                    "application/json": components["schemas"]["LinkRead"];
                 };
             };
             /** @description Validation Error */
@@ -838,7 +840,7 @@ export interface operations {
             };
         };
     };
-    get_reconciliation_evidence_api_planned_runs__planned_session_id__reconciliation_get: {
+    get_link_evidence_api_planned_runs__planned_session_id__linking_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -855,7 +857,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReconciliationEvidenceRead"];
+                    "application/json": components["schemas"]["LinkEvidenceRead"];
                 };
             };
             /** @description Validation Error */
@@ -869,7 +871,7 @@ export interface operations {
             };
         };
     };
-    get_activity_suggestions_api_activities__activity_id__reconciliation_suggestions_get: {
+    get_activity_suggestions_api_activities__activity_id__linking_suggestions_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -900,7 +902,7 @@ export interface operations {
             };
         };
     };
-    get_activity_reconciliation_api_activities__activity_id__reconciliation_get: {
+    get_activity_linking_api_activities__activity_id__linking_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -917,7 +919,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ActivityReconciliationRead"];
+                    "application/json": components["schemas"]["ActivityLinkingRead"];
                 };
             };
             /** @description Validation Error */
@@ -931,7 +933,7 @@ export interface operations {
             };
         };
     };
-    create_direct_allocation_api_activities__activity_id__reconciliation_allocations_post: {
+    create_direct_link_api_activities__activity_id__linking_links_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -942,7 +944,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["DirectAllocationCreate"];
+                "application/json": components["schemas"]["DirectLinkCreate"];
             };
         };
         responses: {
@@ -952,7 +954,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AllocationRead"];
+                    "application/json": components["schemas"]["LinkRead"];
                 };
             };
             /** @description Validation Error */
@@ -966,19 +968,19 @@ export interface operations {
             };
         };
     };
-    adjust_allocation_api_activities__activity_id__reconciliation_allocations__allocation_id__put: {
+    adjust_link_api_activities__activity_id__linking_links__link_id__put: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 activity_id: string;
-                allocation_id: string;
+                link_id: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AllocationUpdate"];
+                "application/json": components["schemas"]["LinkUpdate"];
             };
         };
         responses: {
@@ -988,7 +990,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AllocationRead"];
+                    "application/json": components["schemas"]["LinkRead"];
                 };
             };
             /** @description Validation Error */
@@ -1002,7 +1004,7 @@ export interface operations {
             };
         };
     };
-    delete_allocation_api_activities__activity_id__reconciliation_allocations__allocation_id__delete: {
+    delete_link_api_activities__activity_id__linking_links__link_id__delete: {
         parameters: {
             query: {
                 expected_version: number;
@@ -1010,7 +1012,7 @@ export interface operations {
             header?: never;
             path: {
                 activity_id: string;
-                allocation_id: string;
+                link_id: string;
             };
             cookie?: never;
         };

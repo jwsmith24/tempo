@@ -3,42 +3,42 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tempo.activities.models import CompletedActivity
-from tempo.activities.router import activity_reconciliation_status, activity_response
+from tempo.activities.router import activity_link_status, activity_response
 from tempo.database import get_session
 from tempo.planning.models import PlannedSession
-from tempo.reconciliation.models import ReconciliationAllocation
-from tempo.reconciliation.schemas import (
-    AllocationEvidenceRead,
-    AllocationRead,
-    AllocationUpdate,
-    ActivityAllocationRead,
+from tempo.linking.models import Link
+from tempo.linking.schemas import (
+    ActivityLinkRead,
+    ActivityLinkingRead,
     ActivityMatchSuggestionRead,
-    ActivityReconciliationRead,
-    DirectAllocationCreate,
+    DirectLinkCreate,
+    LinkActivityEvidenceRead,
+    LinkEvidenceRead,
+    LinkRead,
+    LinkUpdate,
     MatchSuggestionRead,
-    ReconciliationEvidenceRead,
     SuggestionConfirm,
     SuggestionDecisionRead,
 )
-from tempo.reconciliation.service import (
+from tempo.linking.service import (
     ALGORITHM_VERSION,
-    ReconciliationConflict,
-    allocated_totals,
+    LinkConflict,
+    linked_totals,
     confirm_suggestion,
-    create_allocation,
+    create_link,
     list_suggestions,
     load_planned_session,
     reject_suggestion,
-    remove_allocation,
-    update_allocation,
+    remove_link,
+    update_link,
 )
 
-router = APIRouter(prefix="/api/planned-runs", tags=["reconciliation"])
-activity_router = APIRouter(prefix="/api/activities", tags=["reconciliation"])
+router = APIRouter(prefix="/api/planned-runs", tags=["linking"])
+activity_router = APIRouter(prefix="/api/activities", tags=["linking"])
 
 
 @activity_router.get(
-    "/{activity_id}/reconciliation/suggestions",
+    "/{activity_id}/linking/suggestions",
     response_model=list[ActivityMatchSuggestionRead],
 )
 def get_activity_suggestions(
@@ -80,7 +80,7 @@ def get_activity_suggestions(
 
 
 @router.get(
-    "/{planned_session_id}/reconciliation/suggestions",
+    "/{planned_session_id}/linking/suggestions",
     response_model=list[MatchSuggestionRead],
 )
 def get_suggestions(
@@ -97,7 +97,7 @@ def get_suggestions(
             planned_session_id=planned_session.id,
             prescription_revision_id=revision.id,
             activity=activity_response(
-                activity, activity_reconciliation_status(session, activity.id)
+                activity, activity_link_status(session, activity.id)
             ),
             algorithm_version=ALGORITHM_VERSION,
             reasons=reasons,
@@ -127,50 +127,44 @@ def require_activity(session: Session, activity_id: str) -> CompletedActivity:
     return activity
 
 
-def require_allocation(
-    session: Session, activity_id: str, allocation_id: str
-) -> ReconciliationAllocation:
-    allocation = session.scalar(
-        select(ReconciliationAllocation).where(
-            ReconciliationAllocation.id == allocation_id,
-            ReconciliationAllocation.completed_activity_id == activity_id,
+def require_link(session: Session, activity_id: str, link_id: str) -> Link:
+    link = session.scalar(
+        select(Link).where(
+            Link.id == link_id,
+            Link.completed_activity_id == activity_id,
         )
     )
-    if allocation is None:
-        raise HTTPException(status_code=404, detail="Reconciliation allocation not found.")
-    return allocation
+    if link is None:
+        raise HTTPException(status_code=404, detail="Link not found.")
+    return link
 
 
 @activity_router.get(
-    "/{activity_id}/reconciliation", response_model=ActivityReconciliationRead
+    "/{activity_id}/linking", response_model=ActivityLinkingRead
 )
-def get_activity_reconciliation(
+def get_activity_linking(
     activity_id: str, session: Session = Depends(get_session)
-) -> ActivityReconciliationRead:
+) -> ActivityLinkingRead:
     activity = require_activity(session, activity_id)
-    allocations = list(
+    links = list(
         session.scalars(
-            select(ReconciliationAllocation)
-            .where(ReconciliationAllocation.completed_activity_id == activity_id)
-            .order_by(ReconciliationAllocation.created_at, ReconciliationAllocation.id)
+            select(Link)
+            .where(Link.completed_activity_id == activity_id)
+            .order_by(Link.created_at, Link.id)
         )
     )
-    allocation_reads: list[ActivityAllocationRead] = []
-    for allocation in allocations:
-        planned_session = load_planned_session(session, allocation.planned_session_id)
+    link_reads: list[ActivityLinkRead] = []
+    for link in links:
+        planned_session = load_planned_session(session, link.planned_session_id)
         if planned_session is not None:
-            allocation_reads.append(
-                ActivityAllocationRead(allocation=allocation, planned_run=planned_session)
-            )
-    allocated_duration, allocated_distance = allocated_totals(session, activity_id)
-    return ActivityReconciliationRead(
-        activity=activity_response(
-            activity, activity_reconciliation_status(session, activity_id)
-        ),
-        allocations=allocation_reads,
-        unallocated_duration_seconds=activity.duration_seconds - allocated_duration,
-        unallocated_distance_metres=(
-            activity.distance_metres - allocated_distance
+            link_reads.append(ActivityLinkRead(link=link, planned_run=planned_session))
+    linked_duration, linked_distance = linked_totals(session, activity_id)
+    return ActivityLinkingRead(
+        activity=activity_response(activity, activity_link_status(session, activity_id)),
+        links=link_reads,
+        remaining_duration_seconds=activity.duration_seconds - linked_duration,
+        remaining_distance_metres=(
+            activity.distance_metres - linked_distance
             if activity.distance_metres is not None
             else None
         ),
@@ -178,79 +172,79 @@ def get_activity_reconciliation(
 
 
 @activity_router.post(
-    "/{activity_id}/reconciliation/allocations",
-    response_model=AllocationRead,
+    "/{activity_id}/linking/links",
+    response_model=LinkRead,
     status_code=status.HTTP_201_CREATED,
 )
-def create_direct_allocation(
+def create_direct_link(
     activity_id: str,
-    request: DirectAllocationCreate,
+    request: DirectLinkCreate,
     session: Session = Depends(get_session),
-) -> ReconciliationAllocation:
+) -> Link:
     session.connection().exec_driver_sql("BEGIN IMMEDIATE")
     planned_session, activity = require_records(
         session, request.planned_session_id, activity_id
     )
     try:
-        return create_allocation(
+        return create_link(
             session,
             planned_session,
             activity,
-            request.allocated_duration_seconds,
-            request.allocated_distance_metres,
+            request.linked_duration_seconds,
+            request.linked_distance_metres,
             "direct",
         )
-    except ReconciliationConflict as error:
+    except LinkConflict as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @activity_router.put(
-    "/{activity_id}/reconciliation/allocations/{allocation_id}",
-    response_model=AllocationRead,
+    "/{activity_id}/linking/links/{link_id}",
+    response_model=LinkRead,
 )
-def adjust_allocation(
+def adjust_link(
     activity_id: str,
-    allocation_id: str,
-    request: AllocationUpdate,
+    link_id: str,
+    request: LinkUpdate,
     session: Session = Depends(get_session),
-) -> ReconciliationAllocation:
+) -> Link:
     session.connection().exec_driver_sql("BEGIN IMMEDIATE")
     activity = require_activity(session, activity_id)
-    allocation = require_allocation(session, activity_id, allocation_id)
+    link = require_link(session, activity_id, link_id)
     try:
-        return update_allocation(
+        return update_link(
             session,
-            allocation,
+            link,
             activity,
-            request.allocated_duration_seconds,
-            request.allocated_distance_metres,
+            request.linked_duration_seconds,
+            request.linked_distance_metres,
             request.expected_version,
         )
-    except ReconciliationConflict as error:
+    except LinkConflict as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @activity_router.delete(
-    "/{activity_id}/reconciliation/allocations/{allocation_id}",
+    "/{activity_id}/linking/links/{link_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def delete_allocation(
+def delete_link(
     activity_id: str,
-    allocation_id: str,
+    link_id: str,
     expected_version: int,
     session: Session = Depends(get_session),
 ) -> None:
     session.connection().exec_driver_sql("BEGIN IMMEDIATE")
     require_activity(session, activity_id)
-    allocation = require_allocation(session, activity_id, allocation_id)
+    link = require_link(session, activity_id, link_id)
     try:
-        remove_allocation(session, allocation, expected_version)
-    except ReconciliationConflict as error:
+        remove_link(session, link, expected_version)
+    except LinkConflict as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.post(
-    "/{planned_session_id}/reconciliation/suggestions/{activity_id}/reject",
+    "/{planned_session_id}/linking/suggestions/{activity_id}/reject",
     response_model=SuggestionDecisionRead,
 )
 def reject_match_suggestion(
@@ -262,14 +256,14 @@ def reject_match_suggestion(
     planned_session, activity = require_records(session, planned_session_id, activity_id)
     try:
         reject_suggestion(session, planned_session, activity)
-    except ReconciliationConflict as error:
+    except LinkConflict as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     return SuggestionDecisionRead(decision="rejected")
 
 
 @router.post(
-    "/{planned_session_id}/reconciliation/suggestions/{activity_id}/confirm",
-    response_model=AllocationRead,
+    "/{planned_session_id}/linking/suggestions/{activity_id}/confirm",
+    response_model=LinkRead,
     status_code=status.HTTP_201_CREATED,
 )
 def confirm_match_suggestion(
@@ -277,7 +271,7 @@ def confirm_match_suggestion(
     activity_id: str,
     request: SuggestionConfirm,
     session: Session = Depends(get_session),
-) -> ReconciliationAllocation:
+) -> Link:
     # SQLite has no row-level locks; reserve the single writer before reading capacity.
     session.connection().exec_driver_sql("BEGIN IMMEDIATE")
     planned_session, activity = require_records(session, planned_session_id, activity_id)
@@ -286,49 +280,47 @@ def confirm_match_suggestion(
             session,
             planned_session,
             activity,
-            request.allocated_duration_seconds,
-            request.allocated_distance_metres,
-            "allocated_distance_metres" not in request.model_fields_set,
+            request.linked_duration_seconds,
+            request.linked_distance_metres,
+            "linked_distance_metres" not in request.model_fields_set,
         )
-    except ReconciliationConflict as error:
+    except LinkConflict as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.get(
-    "/{planned_session_id}/reconciliation",
-    response_model=ReconciliationEvidenceRead,
+    "/{planned_session_id}/linking",
+    response_model=LinkEvidenceRead,
 )
-def get_reconciliation_evidence(
+def get_link_evidence(
     planned_session_id: str, session: Session = Depends(get_session)
-) -> ReconciliationEvidenceRead:
+) -> LinkEvidenceRead:
     planned_session = load_planned_session(session, planned_session_id)
     if planned_session is None:
         raise HTTPException(status_code=404, detail="Planned Run not found.")
     revision = planned_session.active_revision
-    allocations = list(
+    links = list(
         session.scalars(
-            select(ReconciliationAllocation)
-            .where(ReconciliationAllocation.planned_session_id == planned_session_id)
-            .order_by(ReconciliationAllocation.created_at, ReconciliationAllocation.id)
+            select(Link)
+            .where(Link.planned_session_id == planned_session_id)
+            .order_by(Link.created_at, Link.id)
         )
     )
-    evidence: list[AllocationEvidenceRead] = []
-    allocated_duration = 0
-    allocated_distances: list[int] = []
-    for allocation in allocations:
-        activity = session.get(CompletedActivity, allocation.completed_activity_id)
+    evidence: list[LinkActivityEvidenceRead] = []
+    total_linked_duration = 0
+    linked_distances: list[int] = []
+    for link in links:
+        activity = session.get(CompletedActivity, link.completed_activity_id)
         if activity is None:
             continue
-        total_duration, total_distance = allocated_totals(session, activity.id)
-        allocated_duration += allocation.allocated_duration_seconds
-        if allocation.allocated_distance_metres is not None:
-            allocated_distances.append(allocation.allocated_distance_metres)
+        total_duration, total_distance = linked_totals(session, activity.id)
+        total_linked_duration += link.linked_duration_seconds
+        if link.linked_distance_metres is not None:
+            linked_distances.append(link.linked_distance_metres)
         evidence.append(
-            AllocationEvidenceRead(
-                allocation=allocation,
-                activity=activity_response(
-                    activity, activity_reconciliation_status(session, activity.id)
-                ),
+            LinkActivityEvidenceRead(
+                link=link,
+                activity=activity_response(activity, activity_link_status(session, activity.id)),
                 unmatched_duration_seconds=activity.duration_seconds - total_duration,
                 unmatched_distance_metres=(
                     activity.distance_metres - total_distance
@@ -337,26 +329,26 @@ def get_reconciliation_evidence(
                 ),
             )
         )
-    allocated_distance = (
-        sum(allocated_distances)
-        if allocations and len(allocated_distances) == len(allocations)
+    total_linked_distance = (
+        sum(linked_distances)
+        if links and len(linked_distances) == len(links)
         else None
     )
-    return ReconciliationEvidenceRead(
+    return LinkEvidenceRead(
         planned_run=planned_session,
-        allocations=evidence,
-        allocated_duration_seconds=allocated_duration,
-        allocated_distance_metres=allocated_distance,
+        links=evidence,
+        total_linked_duration_seconds=total_linked_duration,
+        total_linked_distance_metres=total_linked_distance,
         duration_difference_seconds=(
-            revision.duration_seconds - allocated_duration
-            if revision is not None and revision.duration_seconds is not None and allocations
+            revision.duration_seconds - total_linked_duration
+            if revision is not None and revision.duration_seconds is not None and links
             else None
         ),
         distance_difference_metres=(
-            revision.distance_metres - allocated_distance
+            revision.distance_metres - total_linked_distance
             if revision is not None
             and revision.distance_metres is not None
-            and allocated_distance is not None
+            and total_linked_distance is not None
             else None
         ),
     )

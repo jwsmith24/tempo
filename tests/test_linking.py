@@ -5,7 +5,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from tempo.main import app
-from tempo.reconciliation.models import ReconciliationAllocation, SuggestionRejection
+from tempo.linking.models import Link, SuggestionRejection
 
 
 def create_run(client: TestClient, scheduled_date: str = "2026-09-20") -> dict[str, object]:
@@ -56,7 +56,7 @@ def test_suggestions_are_deterministic_eligible_and_write_free(
     create_activity(client, start="2026-09-22T12:00:00+00:00", title="Too far")
     create_activity(client, start="2026-09-20T12:00:00+00:00", modality="cycling", title="Ride")
 
-    response = client.get(f"/api/planned-runs/{run['id']}/reconciliation/suggestions")
+    response = client.get(f"/api/planned-runs/{run['id']}/linking/suggestions")
 
     assert response.status_code == 200
     suggestions = response.json()
@@ -70,13 +70,13 @@ def test_suggestions_are_deterministic_eligible_and_write_free(
     assert suggestions[0]["reasons"] == [
         "Both records have running modality.",
         "The activity starts on the Planned Session date.",
-        "The activity has unallocated duration available.",
+        "The activity has remaining duration available for linking.",
     ]
     assert suggestions[0]["proposed_duration_seconds"] == 3300
     assert suggestions[0]["proposed_distance_metres"] == 9000
 
     with Session(create_engine(database_url)) as session:
-        assert session.scalar(select(func.count()).select_from(ReconciliationAllocation)) == 0
+        assert session.scalar(select(func.count()).select_from(Link)) == 0
         assert session.scalar(select(func.count()).select_from(SuggestionRejection)) == 0
 
 
@@ -91,7 +91,7 @@ def test_activity_suggestions_offer_compatible_planned_runs_without_writing(
     )
 
     response = client.get(
-        f"/api/activities/{activity['id']}/reconciliation/suggestions"
+        f"/api/activities/{activity['id']}/linking/suggestions"
     )
 
     assert response.status_code == 200
@@ -105,7 +105,7 @@ def test_activity_suggestions_offer_compatible_planned_runs_without_writing(
     assert suggestions[0]["proposed_duration_seconds"] == 3300
     assert suggestions[0]["proposed_distance_metres"] == 9000
     with Session(create_engine(database_url)) as session:
-        assert session.scalar(select(func.count()).select_from(ReconciliationAllocation)) == 0
+        assert session.scalar(select(func.count()).select_from(Link)) == 0
         assert session.scalar(select(func.count()).select_from(SuggestionRejection)) == 0
 
 
@@ -114,23 +114,23 @@ def test_rejection_suppresses_only_the_unchanged_suggestion_and_persists(
 ) -> None:
     run = create_run(client)
     activity = create_activity(client, start="2026-09-20T07:00:00-04:00")
-    suggestion_url = f"/api/planned-runs/{run['id']}/reconciliation/suggestions"
+    suggestion_url = f"/api/planned-runs/{run['id']}/linking/suggestions"
 
     response = client.post(f"{suggestion_url}/{activity['id']}/reject")
 
     assert response.status_code == 200
     assert response.json() == {"decision": "rejected"}
     assert client.get(suggestion_url).json() == []
-    assert client.get(f"/api/activities/{activity['id']}").json()["reconciliation_status"] == "unmatched"
+    assert client.get(f"/api/activities/{activity['id']}").json()["link_status"] == "unmatched"
     with Session(create_engine(database_url)) as restarted_session:
         rejection = restarted_session.scalar(select(SuggestionRejection))
         assert rejection is not None
         assert rejection.prescription_revision_id == run["active_revision"]["id"]
         assert rejection.completed_activity_id == activity["id"]
-        assert restarted_session.scalar(select(func.count()).select_from(ReconciliationAllocation)) == 0
+        assert restarted_session.scalar(select(func.count()).select_from(Link)) == 0
 
 
-def test_confirmation_defaults_allocation_and_returns_planned_actual_evidence(
+def test_confirmation_defaults_link_and_returns_planned_actual_evidence(
     client: TestClient, database_url: str
 ) -> None:
     run = create_run(client)
@@ -141,36 +141,36 @@ def test_confirmation_defaults_allocation_and_returns_planned_actual_evidence(
         distance=9000,
         title="Steady run",
     )
-    base_url = f"/api/planned-runs/{run['id']}/reconciliation"
+    base_url = f"/api/planned-runs/{run['id']}/linking"
 
     response = client.post(f"{base_url}/suggestions/{activity['id']}/confirm", json={})
 
     assert response.status_code == 201
-    allocation = response.json()
-    assert allocation["planned_session_id"] == run["id"]
-    assert allocation["completed_activity_id"] == activity["id"]
-    assert allocation["allocated_duration_seconds"] == 3300
-    assert allocation["allocated_distance_metres"] == 9000
-    assert allocation["confirmation_source"] == "suggestion"
+    link = response.json()
+    assert link["planned_session_id"] == run["id"]
+    assert link["completed_activity_id"] == activity["id"]
+    assert link["linked_duration_seconds"] == 3300
+    assert link["linked_distance_metres"] == 9000
+    assert link["confirmation_source"] == "suggestion"
 
     evidence = client.get(base_url).json()
     assert evidence["planned_run"]["id"] == run["id"]
-    assert evidence["allocated_duration_seconds"] == 3300
-    assert evidence["allocated_distance_metres"] == 9000
+    assert evidence["total_linked_duration_seconds"] == 3300
+    assert evidence["total_linked_distance_metres"] == 9000
     assert evidence["duration_difference_seconds"] == 300
     assert evidence["distance_difference_metres"] == 1000
-    assert evidence["allocations"][0]["activity"]["title"] == "Steady run"
-    assert evidence["allocations"][0]["unmatched_duration_seconds"] == 0
-    assert evidence["allocations"][0]["unmatched_distance_metres"] == 0
-    assert evidence["allocations"][0]["activity"]["reconciliation_status"] == "allocated"
+    assert evidence["links"][0]["activity"]["title"] == "Steady run"
+    assert evidence["links"][0]["unmatched_duration_seconds"] == 0
+    assert evidence["links"][0]["unmatched_distance_metres"] == 0
+    assert evidence["links"][0]["activity"]["link_status"] == "linked"
     assert evidence["session_outcome"] is None
     assert client.get(f"{base_url}/suggestions").json() == []
-    assert client.get(f"/api/activities/{activity['id']}").json()["reconciliation_status"] == "allocated"
+    assert client.get(f"/api/activities/{activity['id']}").json()["link_status"] == "linked"
 
     with Session(create_engine(database_url)) as restarted_session:
-        persisted = restarted_session.scalar(select(ReconciliationAllocation))
+        persisted = restarted_session.scalar(select(Link))
         assert persisted is not None
-        assert persisted.id == allocation["id"]
+        assert persisted.id == link["id"]
 
 
 def test_confirmation_allows_adjustment_and_rejects_invalid_capacity_or_duplicates(
@@ -181,39 +181,39 @@ def test_confirmation_allows_adjustment_and_rejects_invalid_capacity_or_duplicat
         client, start="2026-09-20T10:00:00+00:00", duration=1800, distance=4000
     )
     confirm_url = (
-        f"/api/planned-runs/{run['id']}/reconciliation/suggestions/{activity['id']}/confirm"
+        f"/api/planned-runs/{run['id']}/linking/suggestions/{activity['id']}/confirm"
     )
 
     too_long = client.post(
         confirm_url,
-        json={"allocated_duration_seconds": 1801, "allocated_distance_metres": 4000},
+        json={"linked_duration_seconds": 1801, "linked_distance_metres": 4000},
     )
     assert too_long.status_code == 409
     assert too_long.json() == {
-        "detail": "Allocated duration exceeds the activity's remaining 1800 seconds."
+        "detail": "Linked duration exceeds the activity's remaining 1800 seconds."
     }
 
     too_far = client.post(
         confirm_url,
-        json={"allocated_duration_seconds": 1200, "allocated_distance_metres": 4001},
+        json={"linked_duration_seconds": 1200, "linked_distance_metres": 4001},
     )
     assert too_far.status_code == 409
     assert too_far.json() == {
-        "detail": "Allocated distance exceeds the activity's remaining 4000 metres."
+        "detail": "Linked distance exceeds the activity's remaining 4000 metres."
     }
 
     confirmed = client.post(
         confirm_url,
-        json={"allocated_duration_seconds": 1200, "allocated_distance_metres": 3000},
+        json={"linked_duration_seconds": 1200, "linked_distance_metres": 3000},
     )
     assert confirmed.status_code == 201
-    assert confirmed.json()["allocated_duration_seconds"] == 1200
-    assert confirmed.json()["allocated_distance_metres"] == 3000
+    assert confirmed.json()["linked_duration_seconds"] == 1200
+    assert confirmed.json()["linked_distance_metres"] == 3000
 
     duplicate = client.post(confirm_url, json={})
     assert duplicate.status_code == 409
     assert duplicate.json() == {
-        "detail": "This Planned Session and Completed Activity are already reconciled."
+        "detail": "This Planned Session and Completed Activity are already linked."
     }
 
 
@@ -223,22 +223,22 @@ def test_confirmation_distinguishes_default_distance_from_no_distance(client: Te
         client, start="2026-09-20T08:00:00+00:00", distance=4000
     )
     defaulted = client.post(
-        f"/api/planned-runs/{default_run['id']}/reconciliation/suggestions/{default_activity['id']}/confirm",
+        f"/api/planned-runs/{default_run['id']}/linking/suggestions/{default_activity['id']}/confirm",
         json={},
     )
     assert defaulted.status_code == 201
-    assert defaulted.json()["allocated_distance_metres"] == 4000
+    assert defaulted.json()["linked_distance_metres"] == 4000
 
     no_distance_run = create_run(client, "2026-09-22")
     no_distance_activity = create_activity(
         client, start="2026-09-22T08:00:00+00:00", distance=4000
     )
     duration_only = client.post(
-        f"/api/planned-runs/{no_distance_run['id']}/reconciliation/suggestions/{no_distance_activity['id']}/confirm",
-        json={"allocated_distance_metres": None},
+        f"/api/planned-runs/{no_distance_run['id']}/linking/suggestions/{no_distance_activity['id']}/confirm",
+        json={"linked_distance_metres": None},
     )
     assert duration_only.status_code == 201
-    assert duration_only.json()["allocated_distance_metres"] is None
+    assert duration_only.json()["linked_distance_metres"] is None
 
 
 def test_confirmation_revalidates_eligibility_and_distance_presence(client: TestClient) -> None:
@@ -247,19 +247,19 @@ def test_confirmation_revalidates_eligibility_and_distance_presence(client: Test
         client, start="2026-09-20T10:00:00+00:00", distance=None
     )
     invalid_distance = client.post(
-        f"/api/planned-runs/{run['id']}/reconciliation/suggestions/{no_distance['id']}/confirm",
-        json={"allocated_distance_metres": 1},
+        f"/api/planned-runs/{run['id']}/linking/suggestions/{no_distance['id']}/confirm",
+        json={"linked_distance_metres": 1},
     )
     assert invalid_distance.status_code == 409
     assert invalid_distance.json() == {
-        "detail": "Distance cannot be allocated because the activity has no recorded distance."
+        "detail": "Distance cannot be linked because the activity has no recorded distance."
     }
 
     incompatible = create_activity(
         client, start="2026-09-24T10:00:00+00:00", modality="running"
     )
     stale = client.post(
-        f"/api/planned-runs/{run['id']}/reconciliation/suggestions/{incompatible['id']}/confirm",
+        f"/api/planned-runs/{run['id']}/linking/suggestions/{incompatible['id']}/confirm",
         json={},
     )
     assert stale.status_code == 409
@@ -268,7 +268,7 @@ def test_confirmation_revalidates_eligibility_and_distance_presence(client: Test
     }
 
 
-def test_concurrent_confirmations_cannot_overallocate_activity(
+def test_concurrent_confirmations_cannot_overlink_activity(
     client: TestClient, database_url: str
 ) -> None:
     first_run = create_run(client)
@@ -279,7 +279,7 @@ def test_concurrent_confirmations_cannot_overallocate_activity(
 
     def confirm(run_id: str):
         return client.post(
-            f"/api/planned-runs/{run_id}/reconciliation/suggestions/{activity['id']}/confirm",
+            f"/api/planned-runs/{run_id}/linking/suggestions/{activity['id']}/confirm",
             json={},
         )
 
@@ -290,9 +290,9 @@ def test_concurrent_confirmations_cannot_overallocate_activity(
     with Session(create_engine(database_url)) as session:
         duration, distance = session.execute(
             select(
-                func.sum(ReconciliationAllocation.allocated_duration_seconds),
-                func.sum(ReconciliationAllocation.allocated_distance_metres),
-            ).where(ReconciliationAllocation.completed_activity_id == activity["id"])
+                func.sum(Link.linked_duration_seconds),
+                func.sum(Link.linked_distance_metres),
+            ).where(Link.completed_activity_id == activity["id"])
         ).one()
         assert duration == 1800
         assert distance == 4000
@@ -301,7 +301,7 @@ def test_concurrent_confirmations_cannot_overallocate_activity(
 def test_concurrent_reject_and_confirm_cannot_both_succeed(client: TestClient) -> None:
     run = create_run(client)
     activity = create_activity(client, start="2026-09-20T10:00:00+00:00")
-    base_url = f"/api/planned-runs/{run['id']}/reconciliation/suggestions/{activity['id']}"
+    base_url = f"/api/planned-runs/{run['id']}/linking/suggestions/{activity['id']}"
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         reject_future = executor.submit(client.post, f"{base_url}/reject")
@@ -311,30 +311,30 @@ def test_concurrent_reject_and_confirm_cannot_both_succeed(client: TestClient) -
     assert len([response for response in responses if response.status_code in (200, 201)]) == 1
     assert len([response for response in responses if response.status_code == 409]) == 1
     assert client.get(
-        f"/api/planned-runs/{run['id']}/reconciliation/suggestions"
+        f"/api/planned-runs/{run['id']}/linking/suggestions"
     ).json() == []
 
 
-def test_reconciliation_is_available_to_a_restarted_client(client: TestClient) -> None:
+def test_linking_is_available_to_a_restarted_client(client: TestClient) -> None:
     run = create_run(client)
     activity = create_activity(client, start="2026-09-20T10:00:00+00:00")
     response = client.post(
-        f"/api/planned-runs/{run['id']}/reconciliation/suggestions/{activity['id']}/confirm",
+        f"/api/planned-runs/{run['id']}/linking/suggestions/{activity['id']}/confirm",
         json={},
     )
     assert response.status_code == 201
 
     with TestClient(app) as restarted_client:
         evidence = restarted_client.get(
-            f"/api/planned-runs/{run['id']}/reconciliation"
+            f"/api/planned-runs/{run['id']}/linking"
         ).json()
-        assert evidence["allocations"][0]["allocation"]["completed_activity_id"] == activity["id"]
+        assert evidence["links"][0]["link"]["completed_activity_id"] == activity["id"]
         assert restarted_client.get(f"/api/activities/{activity['id']}").json()[
-            "reconciliation_status"
-        ] == "allocated"
+            "link_status"
+        ] == "linked"
 
 
-def test_direct_allocations_represent_split_and_combined_evidence(client: TestClient) -> None:
+def test_direct_links_represent_split_and_combined_evidence(client: TestClient) -> None:
     first_run = create_run(client, "2026-09-20")
     second_run = create_run(client, "2026-09-24")
     combined_activity = create_activity(
@@ -351,30 +351,30 @@ def test_direct_allocations_represent_split_and_combined_evidence(client: TestCl
         distance=3000,
         title="Second recording",
     )
-    direct_url = f"/api/activities/{combined_activity['id']}/reconciliation/allocations"
+    direct_url = f"/api/activities/{combined_activity['id']}/linking/links"
 
     first = client.post(
         direct_url,
         json={
             "planned_session_id": first_run["id"],
-            "allocated_duration_seconds": 2400,
-            "allocated_distance_metres": 5000,
+            "linked_duration_seconds": 2400,
+            "linked_distance_metres": 5000,
         },
     )
     second = client.post(
         direct_url,
         json={
             "planned_session_id": second_run["id"],
-            "allocated_duration_seconds": 1800,
-            "allocated_distance_metres": 4000,
+            "linked_duration_seconds": 1800,
+            "linked_distance_metres": 4000,
         },
     )
     split = client.post(
-        f"/api/activities/{split_activity['id']}/reconciliation/allocations",
+        f"/api/activities/{split_activity['id']}/linking/links",
         json={
             "planned_session_id": first_run["id"],
-            "allocated_duration_seconds": 1200,
-            "allocated_distance_metres": 3000,
+            "linked_duration_seconds": 1200,
+            "linked_distance_metres": 3000,
         },
     )
 
@@ -382,50 +382,50 @@ def test_direct_allocations_represent_split_and_combined_evidence(client: TestCl
     assert first.json()["confirmation_source"] == "direct"
     assert first.json()["version"] == 1
     activity_evidence = client.get(
-        f"/api/activities/{combined_activity['id']}/reconciliation"
+        f"/api/activities/{combined_activity['id']}/linking"
     ).json()
-    assert [item["planned_run"]["id"] for item in activity_evidence["allocations"]] == [
+    assert [item["planned_run"]["id"] for item in activity_evidence["links"]] == [
         first_run["id"],
         second_run["id"],
     ]
-    assert activity_evidence["unallocated_duration_seconds"] == 1200
-    assert activity_evidence["unallocated_distance_metres"] == 3000
+    assert activity_evidence["remaining_duration_seconds"] == 1200
+    assert activity_evidence["remaining_distance_metres"] == 3000
     first_run_evidence = client.get(
-        f"/api/planned-runs/{first_run['id']}/reconciliation"
+        f"/api/planned-runs/{first_run['id']}/linking"
     ).json()
-    assert len(first_run_evidence["allocations"]) == 2
-    assert first_run_evidence["allocated_duration_seconds"] == 3600
-    assert first_run_evidence["allocated_distance_metres"] == 8000
+    assert len(first_run_evidence["links"]) == 2
+    assert first_run_evidence["total_linked_duration_seconds"] == 3600
+    assert first_run_evidence["total_linked_distance_metres"] == 8000
     assert first_run_evidence["duration_difference_seconds"] == 0
     assert first_run_evidence["distance_difference_metres"] == 2000
-    assert first_run_evidence["allocations"][0]["activity"]["reconciliation_status"] in {
-        "partially_allocated",
-        "allocated",
+    assert first_run_evidence["links"][0]["activity"]["link_status"] in {
+        "partly_linked",
+        "linked",
     }
 
 
-def test_direct_allocation_adjustment_removal_and_stale_write(client: TestClient) -> None:
+def test_direct_link_adjustment_removal_and_stale_write(client: TestClient) -> None:
     run = create_run(client, "2026-09-20")
     activity = create_activity(
         client, start="2026-09-28T08:00:00+00:00", duration=3600, distance=8000
     )
-    allocations_url = f"/api/activities/{activity['id']}/reconciliation/allocations"
+    links_url = f"/api/activities/{activity['id']}/linking/links"
     created = client.post(
-        allocations_url,
+        links_url,
         json={
             "planned_session_id": run["id"],
-            "allocated_duration_seconds": 1200,
-            "allocated_distance_metres": 2000,
+            "linked_duration_seconds": 1200,
+            "linked_distance_metres": 2000,
         },
     )
     assert created.status_code == 201
-    allocation = created.json()
+    link = created.json()
 
     updated = client.put(
-        f"{allocations_url}/{allocation['id']}",
+        f"{links_url}/{link['id']}",
         json={
-            "allocated_duration_seconds": 1800,
-            "allocated_distance_metres": 3000,
+            "linked_duration_seconds": 1800,
+            "linked_distance_metres": 3000,
             "expected_version": 1,
         },
     )
@@ -433,32 +433,32 @@ def test_direct_allocation_adjustment_removal_and_stale_write(client: TestClient
     assert updated.json()["version"] == 2
 
     stale = client.put(
-        f"{allocations_url}/{allocation['id']}",
+        f"{links_url}/{link['id']}",
         json={
-            "allocated_duration_seconds": 2400,
-            "allocated_distance_metres": 4000,
+            "linked_duration_seconds": 2400,
+            "linked_distance_metres": 4000,
             "expected_version": 1,
         },
     )
     assert stale.status_code == 409
     assert stale.json() == {
-        "detail": "This allocation changed since it was loaded. Reload and try again."
+        "detail": "This link changed since it was loaded. Reload and try again."
     }
 
     removed = client.delete(
-        f"{allocations_url}/{allocation['id']}", params={"expected_version": 2}
+        f"{links_url}/{link['id']}", params={"expected_version": 2}
     )
     assert removed.status_code == 204
-    evidence = client.get(f"/api/activities/{activity['id']}/reconciliation").json()
-    assert evidence["allocations"] == []
-    assert evidence["unallocated_duration_seconds"] == 3600
-    assert evidence["unallocated_distance_metres"] == 8000
+    evidence = client.get(f"/api/activities/{activity['id']}/linking").json()
+    assert evidence["links"] == []
+    assert evidence["remaining_duration_seconds"] == 3600
+    assert evidence["remaining_distance_metres"] == 8000
     assert client.get(f"/api/activities/{activity['id']}").json()[
-        "reconciliation_status"
+        "link_status"
     ] == "unmatched"
 
 
-def test_direct_allocation_revalidates_aggregate_capacity_and_duplicates(
+def test_direct_link_revalidates_aggregate_capacity_and_duplicates(
     client: TestClient,
 ) -> None:
     first_run = create_run(client)
@@ -466,48 +466,48 @@ def test_direct_allocation_revalidates_aggregate_capacity_and_duplicates(
     activity = create_activity(
         client, start="2026-09-20T08:00:00+00:00", duration=1800, distance=4000
     )
-    url = f"/api/activities/{activity['id']}/reconciliation/allocations"
+    url = f"/api/activities/{activity['id']}/linking/links"
     payload = {
         "planned_session_id": first_run["id"],
-        "allocated_duration_seconds": 1200,
-        "allocated_distance_metres": 3000,
+        "linked_duration_seconds": 1200,
+        "linked_distance_metres": 3000,
     }
     assert client.post(url, json=payload).status_code == 201
 
     duplicate = client.post(url, json=payload)
     assert duplicate.status_code == 409
     assert duplicate.json() == {
-        "detail": "This Planned Session and Completed Activity are already reconciled."
+        "detail": "This Planned Session and Completed Activity are already linked."
     }
-    overallocated = client.post(
+    overlinked = client.post(
         url,
         json={
             "planned_session_id": second_run["id"],
-            "allocated_duration_seconds": 601,
-            "allocated_distance_metres": 1001,
+            "linked_duration_seconds": 601,
+            "linked_distance_metres": 1001,
         },
     )
-    assert overallocated.status_code == 409
-    assert "remaining 600 seconds" in overallocated.json()["detail"]
+    assert overlinked.status_code == 409
+    assert "remaining 600 seconds" in overlinked.json()["detail"]
 
     no_distance = create_activity(
         client, start="2026-09-20T09:00:00+00:00", distance=None
     )
     invalid_distance = client.post(
-        f"/api/activities/{no_distance['id']}/reconciliation/allocations",
+        f"/api/activities/{no_distance['id']}/linking/links",
         json={
             "planned_session_id": second_run["id"],
-            "allocated_duration_seconds": 600,
-            "allocated_distance_metres": 1,
+            "linked_duration_seconds": 600,
+            "linked_distance_metres": 1,
         },
     )
     assert invalid_distance.status_code == 409
     assert invalid_distance.json() == {
-        "detail": "Distance cannot be allocated because the activity has no recorded distance."
+        "detail": "Distance cannot be linked because the activity has no recorded distance."
     }
 
 
-def test_concurrent_direct_allocations_cannot_overallocate_activity(
+def test_concurrent_direct_links_cannot_overlink_activity(
     client: TestClient, database_url: str
 ) -> None:
     first_run = create_run(client)
@@ -515,58 +515,58 @@ def test_concurrent_direct_allocations_cannot_overallocate_activity(
     activity = create_activity(
         client, start="2026-09-20T08:00:00+00:00", duration=1800, distance=4000
     )
-    url = f"/api/activities/{activity['id']}/reconciliation/allocations"
+    url = f"/api/activities/{activity['id']}/linking/links"
 
-    def allocate(run_id: str):
+    def link(run_id: str):
         return client.post(
             url,
             json={
                 "planned_session_id": run_id,
-                "allocated_duration_seconds": 1200,
-                "allocated_distance_metres": 3000,
+                "linked_duration_seconds": 1200,
+                "linked_distance_metres": 3000,
             },
         )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        responses = list(executor.map(allocate, [first_run["id"], second_run["id"]]))
+        responses = list(executor.map(link, [first_run["id"], second_run["id"]]))
 
     assert sorted(response.status_code for response in responses) == [201, 409]
     with Session(create_engine(database_url)) as session:
         duration, distance = session.execute(
             select(
-                func.sum(ReconciliationAllocation.allocated_duration_seconds),
-                func.sum(ReconciliationAllocation.allocated_distance_metres),
-            ).where(ReconciliationAllocation.completed_activity_id == activity["id"])
+                func.sum(Link.linked_duration_seconds),
+                func.sum(Link.linked_distance_metres),
+            ).where(Link.completed_activity_id == activity["id"])
         ).one()
         assert duration == 1200
         assert distance == 3000
 
 
-def test_direct_allocations_are_available_to_a_restarted_client(client: TestClient) -> None:
+def test_direct_links_are_available_to_a_restarted_client(client: TestClient) -> None:
     run = create_run(client)
     activity = create_activity(
         client, start="2026-09-22T08:00:00+00:00", duration=2400, distance=5000
     )
     created = client.post(
-        f"/api/activities/{activity['id']}/reconciliation/allocations",
+        f"/api/activities/{activity['id']}/linking/links",
         json={
             "planned_session_id": run["id"],
-            "allocated_duration_seconds": 1200,
-            "allocated_distance_metres": 2000,
+            "linked_duration_seconds": 1200,
+            "linked_distance_metres": 2000,
         },
     )
     assert created.status_code == 201
 
     with TestClient(app) as restarted_client:
         evidence = restarted_client.get(
-            f"/api/activities/{activity['id']}/reconciliation"
+            f"/api/activities/{activity['id']}/linking"
         ).json()
-        assert evidence["allocations"][0]["allocation"]["id"] == created.json()["id"]
-        assert evidence["unallocated_duration_seconds"] == 1200
-        assert evidence["unallocated_distance_metres"] == 3000
+        assert evidence["links"][0]["link"]["id"] == created.json()["id"]
+        assert evidence["remaining_duration_seconds"] == 1200
+        assert evidence["remaining_distance_metres"] == 3000
 
 
-def test_planned_distance_is_not_compared_when_any_allocation_omits_distance(
+def test_planned_distance_is_not_compared_when_any_link_omits_distance(
     client: TestClient,
 ) -> None:
     run = create_run(client)
@@ -578,17 +578,17 @@ def test_planned_distance_is_not_compared_when_any_allocation_omits_distance(
     )
     for activity, distance in ((first_activity, 4000), (second_activity, None)):
         response = client.post(
-            f"/api/activities/{activity['id']}/reconciliation/allocations",
+            f"/api/activities/{activity['id']}/linking/links",
             json={
                 "planned_session_id": run["id"],
-                "allocated_duration_seconds": 1800,
-                "allocated_distance_metres": distance,
+                "linked_duration_seconds": 1800,
+                "linked_distance_metres": distance,
             },
         )
         assert response.status_code == 201
 
-    evidence = client.get(f"/api/planned-runs/{run['id']}/reconciliation").json()
-    assert evidence["allocated_duration_seconds"] == 3600
+    evidence = client.get(f"/api/planned-runs/{run['id']}/linking").json()
+    assert evidence["total_linked_duration_seconds"] == 3600
     assert evidence["duration_difference_seconds"] == 0
-    assert evidence["allocated_distance_metres"] is None
+    assert evidence["total_linked_distance_metres"] is None
     assert evidence["distance_difference_metres"] is None

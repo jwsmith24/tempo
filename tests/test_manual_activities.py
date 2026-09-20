@@ -3,6 +3,7 @@ from sqlalchemy import create_engine, func, inspect, select
 from sqlalchemy.orm import Session
 
 from tempo.activities.models import CompletedActivity
+from tempo.main import app
 
 
 def valid_activity() -> dict[str, object]:
@@ -29,7 +30,7 @@ def test_create_retrieve_and_list_unmatched_manual_activity(
         "entry_source": "manual",
         "creation_provenance": "athlete_entry",
         "created_at": created["created_at"],
-        "reconciliation_status": "unmatched",
+        "link_status": "unmatched",
     }
     assert created["start_instant"].endswith("+05:30")
     assert created["created_at"].endswith("Z")
@@ -114,3 +115,9 @@ def test_unknown_activity_is_actionable(client: TestClient) -> None:
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Completed Activity not found."}
+
+
+def test_openapi_constrains_activity_link_status() -> None:
+    schema = app.openapi()["components"]["schemas"]["ActivityLinkStatus"]
+
+    assert schema["enum"] == ["unmatched", "partly_linked", "linked"]

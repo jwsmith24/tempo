@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from tempo.activities.models import CompletedActivity
 from tempo.planning.models import PlannedSession
-from tempo.reconciliation.models import ReconciliationAllocation, SuggestionRejection
+from tempo.linking.models import Link, SuggestionRejection
 
 ALGORITHM_VERSION = "stage1-date-noon-v1"
 
@@ -24,16 +24,16 @@ def load_planned_session(session: Session, planned_session_id: str) -> PlannedSe
     )
 
 
-def allocated_totals(
-    session: Session, activity_id: str, exclude_allocation_id: str | None = None
+def linked_totals(
+    session: Session, activity_id: str, exclude_link_id: str | None = None
 ) -> tuple[int, int]:
-    criteria = [ReconciliationAllocation.completed_activity_id == activity_id]
-    if exclude_allocation_id is not None:
-        criteria.append(ReconciliationAllocation.id != exclude_allocation_id)
+    criteria = [Link.completed_activity_id == activity_id]
+    if exclude_link_id is not None:
+        criteria.append(Link.id != exclude_link_id)
     duration, distance = session.execute(
         select(
-            func.coalesce(func.sum(ReconciliationAllocation.allocated_duration_seconds), 0),
-            func.coalesce(func.sum(ReconciliationAllocation.allocated_distance_metres), 0),
+            func.coalesce(func.sum(Link.linked_duration_seconds), 0),
+            func.coalesce(func.sum(Link.linked_distance_metres), 0),
         ).where(*criteria)
     ).one()
     return int(duration), int(distance)
@@ -48,7 +48,7 @@ def suggestion_reasons(planned_date: date, activity_date: date) -> list[str]:
     return [
         "Both records have running modality.",
         timing,
-        "The activity has unallocated duration available.",
+        "The activity has remaining duration available for linking.",
     ]
 
 
@@ -81,20 +81,20 @@ def list_suggestions(
             continue
         if (activity.id, activity_effective_version(activity)) in rejected:
             continue
-        allocated_duration, allocated_distance = allocated_totals(session, activity.id)
-        remaining_duration = activity.duration_seconds - allocated_duration
+        linked_duration, linked_distance = linked_totals(session, activity.id)
+        remaining_duration = activity.duration_seconds - linked_duration
         if remaining_duration <= 0:
             continue
         existing_pair = session.scalar(
-            select(ReconciliationAllocation.id).where(
-                ReconciliationAllocation.planned_session_id == planned_session.id,
-                ReconciliationAllocation.completed_activity_id == activity.id,
+            select(Link.id).where(
+                Link.planned_session_id == planned_session.id,
+                Link.completed_activity_id == activity.id,
             )
         )
         if existing_pair is not None:
             continue
         remaining_distance = (
-            activity.distance_metres - allocated_distance
+            activity.distance_metres - linked_distance
             if activity.distance_metres is not None
             else None
         )
@@ -117,7 +117,7 @@ def list_suggestions(
     return [(item[2], item[3], item[4], item[5]) for item in candidates]
 
 
-class ReconciliationConflict(ValueError):
+class LinkConflict(ValueError):
     pass
 
 
@@ -126,102 +126,102 @@ def validate_capacity(
     activity: CompletedActivity,
     duration: int,
     distance: int | None,
-    exclude_allocation_id: str | None = None,
+    exclude_link_id: str | None = None,
 ) -> None:
-    allocated_duration, allocated_distance = allocated_totals(
-        session, activity.id, exclude_allocation_id
+    linked_duration, linked_distance = linked_totals(
+        session, activity.id, exclude_link_id
     )
-    remaining_duration = activity.duration_seconds - allocated_duration
+    remaining_duration = activity.duration_seconds - linked_duration
     if duration > remaining_duration:
-        raise ReconciliationConflict(
-            f"Allocated duration exceeds the activity's remaining {remaining_duration} seconds."
+        raise LinkConflict(
+            f"Linked duration exceeds the activity's remaining {remaining_duration} seconds."
         )
     if distance is not None and activity.distance_metres is None:
-        raise ReconciliationConflict(
-            "Distance cannot be allocated because the activity has no recorded distance."
+        raise LinkConflict(
+            "Distance cannot be linked because the activity has no recorded distance."
         )
     remaining_distance = (
-        activity.distance_metres - allocated_distance
+        activity.distance_metres - linked_distance
         if activity.distance_metres is not None
         else None
     )
     if distance is not None and remaining_distance is not None and distance > remaining_distance:
-        raise ReconciliationConflict(
-            f"Allocated distance exceeds the activity's remaining {remaining_distance} metres."
+        raise LinkConflict(
+            f"Linked distance exceeds the activity's remaining {remaining_distance} metres."
         )
 
 
-def create_allocation(
+def create_link(
     session: Session,
     planned_session: PlannedSession,
     activity: CompletedActivity,
     duration: int,
     distance: int | None,
     confirmation_source: str,
-) -> ReconciliationAllocation:
+) -> Link:
     existing = session.scalar(
-        select(ReconciliationAllocation.id).where(
-            ReconciliationAllocation.planned_session_id == planned_session.id,
-            ReconciliationAllocation.completed_activity_id == activity.id,
+        select(Link.id).where(
+            Link.planned_session_id == planned_session.id,
+            Link.completed_activity_id == activity.id,
         )
     )
     if existing is not None:
-        raise ReconciliationConflict(
-            "This Planned Session and Completed Activity are already reconciled."
+        raise LinkConflict(
+            "This Planned Session and Completed Activity are already linked."
         )
     validate_capacity(session, activity, duration, distance)
-    allocation = ReconciliationAllocation(
+    link = Link(
         planned_session_id=planned_session.id,
         completed_activity_id=activity.id,
-        allocated_duration_seconds=duration,
-        allocated_distance_metres=distance,
+        linked_duration_seconds=duration,
+        linked_distance_metres=distance,
         confirmation_source=confirmation_source,
         version=1,
         created_at=datetime.now(UTC),
     )
-    session.add(allocation)
+    session.add(link)
     try:
         session.commit()
     except IntegrityError as error:
         session.rollback()
-        raise ReconciliationConflict(
-            "This Planned Session and Completed Activity are already reconciled."
+        raise LinkConflict(
+            "This Planned Session and Completed Activity are already linked."
         ) from error
-    session.refresh(allocation)
-    return allocation
+    session.refresh(link)
+    return link
 
 
-def update_allocation(
+def update_link(
     session: Session,
-    allocation: ReconciliationAllocation,
+    link: Link,
     activity: CompletedActivity,
     duration: int,
     distance: int | None,
     expected_version: int,
-) -> ReconciliationAllocation:
-    if allocation.version != expected_version:
-        raise ReconciliationConflict(
-            "This allocation changed since it was loaded. Reload and try again."
+) -> Link:
+    if link.version != expected_version:
+        raise LinkConflict(
+            "This link changed since it was loaded. Reload and try again."
         )
-    validate_capacity(session, activity, duration, distance, allocation.id)
-    allocation.allocated_duration_seconds = duration
-    allocation.allocated_distance_metres = distance
-    allocation.version += 1
+    validate_capacity(session, activity, duration, distance, link.id)
+    link.linked_duration_seconds = duration
+    link.linked_distance_metres = distance
+    link.version += 1
     session.commit()
-    session.refresh(allocation)
-    return allocation
+    session.refresh(link)
+    return link
 
 
-def remove_allocation(
+def remove_link(
     session: Session,
-    allocation: ReconciliationAllocation,
+    link: Link,
     expected_version: int,
 ) -> None:
-    if allocation.version != expected_version:
-        raise ReconciliationConflict(
-            "This allocation changed since it was loaded. Reload and try again."
+    if link.version != expected_version:
+        raise LinkConflict(
+            "This link changed since it was loaded. Reload and try again."
         )
-    session.delete(allocation)
+    session.delete(link)
     session.commit()
 
 
@@ -236,7 +236,7 @@ def reject_suggestion(
 ) -> SuggestionRejection:
     revision = planned_session.active_revision
     if revision is None or not suggestion_is_eligible(session, planned_session, activity):
-        raise ReconciliationConflict("These records are no longer eligible for this match suggestion.")
+        raise LinkConflict("These records are no longer eligible for this match suggestion.")
     rejection = SuggestionRejection(
         prescription_revision_id=revision.id,
         completed_activity_id=activity.id,
@@ -260,7 +260,7 @@ def reject_suggestion(
         )
         if existing is not None:
             return existing
-        raise ReconciliationConflict("The suggestion decision could not be saved.") from error
+        raise LinkConflict("The suggestion decision could not be saved.") from error
     return rejection
 
 
@@ -271,28 +271,28 @@ def confirm_suggestion(
     requested_duration: int | None,
     requested_distance: int | None,
     default_distance: bool,
-) -> ReconciliationAllocation:
+) -> Link:
     existing = session.scalar(
-        select(ReconciliationAllocation.id).where(
-            ReconciliationAllocation.planned_session_id == planned_session.id,
-            ReconciliationAllocation.completed_activity_id == activity.id,
+        select(Link.id).where(
+            Link.planned_session_id == planned_session.id,
+            Link.completed_activity_id == activity.id,
         )
     )
     if existing is not None:
-        raise ReconciliationConflict(
-            "This Planned Session and Completed Activity are already reconciled."
+        raise LinkConflict(
+            "This Planned Session and Completed Activity are already linked."
         )
     if not suggestion_is_eligible(session, planned_session, activity):
-        raise ReconciliationConflict("These records are no longer eligible for this match suggestion.")
-    allocated_duration, allocated_distance = allocated_totals(session, activity.id)
-    remaining_duration = activity.duration_seconds - allocated_duration
+        raise LinkConflict("These records are no longer eligible for this match suggestion.")
+    linked_duration, linked_distance = linked_totals(session, activity.id)
+    remaining_duration = activity.duration_seconds - linked_duration
     remaining_distance = (
-        activity.distance_metres - allocated_distance
+        activity.distance_metres - linked_distance
         if activity.distance_metres is not None
         else None
     )
     duration = requested_duration if requested_duration is not None else remaining_duration
     distance = remaining_distance if default_distance else requested_distance
-    return create_allocation(
+    return create_link(
         session, planned_session, activity, duration, distance, "suggestion"
     )

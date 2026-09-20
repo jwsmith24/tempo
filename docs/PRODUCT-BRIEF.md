@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Tempo is a local-first, single-athlete tool for executing an integrated run, bike, and strength program. It acts as a daily source of truth: show what training is intended, ingest or record what happened, reconcile the two, reveal progress and execution patterns, and propose explainable schedule or dose changes for athlete approval.
+Tempo is a local-first, single-athlete tool for executing an integrated run, bike, and strength program. It acts as a daily source of truth: show what training is intended, ingest or record what happened, link the two, reveal progress and execution patterns, and propose explainable schedule or dose changes for athlete approval.
 
 The first proof of value is four weeks of exclusive use without a parallel planning spreadsheet or training log.
 
@@ -26,7 +26,7 @@ The daily loop is:
 1. Review today's Planned Sessions, readiness context, and trajectory.
 2. Train using existing devices or workflows.
 3. Import Completed Activities or enter them manually.
-4. Confirm suggested matches between planned and completed work.
+4. Review match suggestions and confirm Links between planned and completed work.
 5. Record Session Outcomes, a tiny check-in, and any corrections.
 6. Review findings and explicitly accept, decline, or ignore no Recommendation.
 
@@ -52,13 +52,13 @@ Outside sources remain authoritative for plan content. The tool records source m
 
 An Integrated Program overlays concurrent running and strength Training Blocks. Explicit priorities and constraints resolve conflicts. Open-ended base-building may coexist with dated goals and benchmark sessions.
 
-## Calendar And Reconciliation
+## Calendar And Linking
 
 Required views are day, week, and block.
 
-The calendar supports creating, editing, rescheduling, and reconciling individual Planned Sessions. Every prescription or schedule change preserves revisions, rationale, and the active revision at execution time.
+The calendar supports creating, editing, rescheduling, and linking individual Planned Sessions. Every prescription or schedule change preserves revisions, rationale, and the active revision at execution time.
 
-Matching is many-to-many so split recordings and combined sessions can be represented explicitly. An unmatched Completed Activity remains legitimate unplanned training evidence.
+Links are many-to-many so split recordings and combined sessions can be represented explicitly. An unmatched Completed Activity remains legitimate unplanned training evidence.
 
 Session Outcomes distinguish:
 
@@ -130,7 +130,7 @@ Deletion is reversible until explicit purge. Purge removes associated raw data. 
 
 The MVP is a responsive React and TypeScript single-page application served by a loopback-only local FastAPI application. The backend uses Python, SQLAlchemy, migrations, SQLite, and managed local raw-file storage.
 
-The application is a modular monolith with explicit modules for planning, activities, reconciliation, analysis, coaching, and athlete settings. One backend-owned API schema governs the frontend contract.
+The application is a modular monolith with explicit modules for planning, activities, linking, analysis, coaching, and athlete settings. One backend-owned API schema governs the frontend contract.
 
 Derived metrics update after relevant writes and can be rebuilt deterministically. Current algorithms recompute historical analysis while algorithm versions and historical Recommendation decisions remain traceable.
 
@@ -140,9 +140,9 @@ The UI is keyboard operable, does not encode state by color alone, provides read
 
 ## Delivery Stages
 
-### Stage 1: Reconciliation
+### Stage 1: Linking
 
-Enter one Planned Run, import its FIT activity, suggest and confirm a match, record its Session Outcome and check-in, and show planned-versus-actual evidence.
+Enter one Planned Run, import its FIT activity, suggest a match and confirm a Link, record its Session Outcome and check-in, and show planned-versus-actual evidence.
 
 Also support manual Completed Activity entry, idempotent import, provenance, corrections, and basic export.
 
@@ -169,7 +169,7 @@ Critical correctness checks include:
 - repeated imports do not duplicate activities;
 - corrections never destroy imported source values;
 - reschedules and accepted recommendations preserve prior prescriptions;
-- split and combined recordings reconcile without fabrication;
+- split and combined recordings link without fabrication;
 - justified skips remain visible as deviations;
 - analysis can be rebuilt reproducibly;
 - missing evidence causes qualified output or abstention;
