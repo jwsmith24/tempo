@@ -382,6 +382,23 @@ export function App() {
     setStatus("Correction recorded. Original evidence remains preserved.");
   }
 
+  async function exportRecord() {
+    setErrors({});
+    setStatus("Preparing portable Stage 1 record...");
+    const response = await fetch("/api/export", { method: "POST" });
+    if (!response.ok) {
+      setStatus("Export was not created. The local record is unchanged.");
+      return;
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const download = document.createElement("a");
+    download.href = url;
+    download.download = "tempo-stage1-export.zip";
+    download.click();
+    URL.revokeObjectURL(url);
+    setStatus("Export downloaded: complete Stage 1 record and retained raw inputs.");
+  }
+
   async function refreshEvidence(plannedSessionId: string): Promise<boolean> {
     const response = await fetch(`/api/planned-runs/${plannedSessionId}/linking`);
     if (!response.ok) {
@@ -475,6 +492,7 @@ export function App() {
         </p>
       </section>
       <p className="mb-[18px] min-h-6 font-mono text-[13px] font-medium" role="status" aria-live="polite">{loading ? "Loading local record..." : status}</p>
+      <button type="button" className={`${secondaryButton} mt-0! mb-6!`} onClick={exportRecord}>Export Stage 1 Record</button>
       {activity ? <ActivityDetail activity={activity} linking={activityLinking} plannedRuns={plannedRuns} evidence={evidence} errors={errors} onConfirm={confirmCandidate} onCreateDirect={createDirectLink} onChange={changeDirectLink} onRemove={removeDirectLink} onResolveLegacy={resolveLegacy} onRecordOutcome={recordOutcome} onRecordCheckIn={recordCheckIn} onRecordCorrection={recordCorrection} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : currentRoute === "activity-import" ? <ImportForm onSubmit={importActivity} errors={errors} /> : run ? <RunDetail run={run} evidence={evidence} errors={errors} onRecordOutcome={recordOutcome} onRecordCheckIn={recordCheckIn} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
     </main>
   );

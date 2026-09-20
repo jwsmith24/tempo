@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from tempo.activities.router import router as activities_router
+from tempo.export_router import router as export_router
 from tempo.planning.router import router as planning_router
 from tempo.linking.router import activity_router as activity_linking_router
 from tempo.linking.router import router as linking_router
@@ -14,6 +15,7 @@ app.include_router(planning_router)
 app.include_router(activities_router)
 app.include_router(linking_router)
 app.include_router(activity_linking_router)
+app.include_router(export_router)
 
 spa_directory = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 if spa_directory.is_dir():

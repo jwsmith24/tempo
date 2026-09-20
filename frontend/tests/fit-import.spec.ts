@@ -41,3 +41,16 @@ test("shows an actionable FIT import error", async ({ page }) => {
   await expect(page.getByLabel("Garmin FIT activity")).toHaveAttribute("aria-invalid", "true");
   await expect(page.locator("#fit-file-error")).toContainText("FIT");
 });
+
+test("requests a portable Stage 1 export", async ({ page }) => {
+  await page.goto("/");
+  const button = page.getByRole("button", { name: "Export Stage 1 Record" });
+  await button.focus();
+  await expect(button).toBeFocused();
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    button.press("Enter"),
+  ]);
+  await expect(page.getByRole("status")).toContainText("Export downloaded");
+  await expect(download.suggestedFilename()).toBe("tempo-stage1-export.zip");
+});
