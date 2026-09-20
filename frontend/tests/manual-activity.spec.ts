@@ -31,7 +31,7 @@ test("records and revisits unmatched manual training evidence", async ({ page })
   await expect(page.getByRole("button", { name: /Save Completed Activity/ })).toHaveCSS("outline-style", "solid");
   await page.keyboard.press("Enter");
 
-  await expect(page.getByRole("status")).toContainText("unmatched training evidence");
+  await expect(page.getByRole("status")).toContainText("Matching evaluated");
   await expect(page.getByText("Unmatched", { exact: true })).toBeVisible();
   await expect(page.getByText("Source: manual / Created by athlete entry")).toBeVisible();
   await expect(page.getByText("2026-09-20T06:30:00+05:30")).toBeVisible();

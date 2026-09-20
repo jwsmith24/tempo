@@ -114,6 +114,10 @@ def import_fit_activity(content: bytes, session: Session) -> CompletedActivity:
                 sync_file(staged)
             sync_directory(raw_directory)
             session.add(activity)
+            session.flush()
+            from tempo.linking.service import evaluate_after_ingestion
+
+            evaluate_after_ingestion(session, activity)
             session.commit()
         except Exception:
             session.rollback()

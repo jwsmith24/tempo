@@ -18,8 +18,8 @@ class ActivityEntrySource(StrEnum):
 
 class ActivityLinkStatus(StrEnum):
     unmatched = "unmatched"
-    partly_linked = "partly_linked"
     linked = "linked"
+    legacy_unresolved = "legacy_unresolved"
 
 
 class ManualActivityCreate(BaseModel):

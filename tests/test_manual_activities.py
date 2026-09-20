@@ -120,4 +120,4 @@ def test_unknown_activity_is_actionable(client: TestClient) -> None:
 def test_openapi_constrains_activity_link_status() -> None:
     schema = app.openapi()["components"]["schemas"]["ActivityLinkStatus"]
 
-    assert schema["enum"] == ["unmatched", "partly_linked", "linked"]
+    assert schema["enum"] == ["unmatched", "linked", "legacy_unresolved"]

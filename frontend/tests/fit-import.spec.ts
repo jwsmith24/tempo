@@ -13,7 +13,7 @@ test("imports and revisits unmatched Garmin FIT evidence", async ({ page }) => {
   await input.setInputFiles(fixture);
   await page.getByRole("button", { name: /Import FIT Activity/ }).click();
 
-  await expect(page.getByRole("status")).toContainText("unmatched training evidence");
+  await expect(page.getByRole("status")).toContainText("Matching evaluated");
   await expect(page.getByText("Source: Garmin FIT import")).toBeVisible();
   await expect(page.getByText("fitdecode 0.11.0")).toBeVisible();
   await expect(page.getByText("sha256/", { exact: false })).toBeVisible();

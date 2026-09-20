@@ -91,57 +91,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/planned-runs/{planned_session_id}/linking/suggestions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Suggestions */
-        get: operations["get_suggestions_api_planned_runs__planned_session_id__linking_suggestions_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/planned-runs/{planned_session_id}/linking/suggestions/{activity_id}/reject": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Reject Match Suggestion */
-        post: operations["reject_match_suggestion_api_planned_runs__planned_session_id__linking_suggestions__activity_id__reject_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/planned-runs/{planned_session_id}/linking/suggestions/{activity_id}/confirm": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Confirm Match Suggestion */
-        post: operations["confirm_match_suggestion_api_planned_runs__planned_session_id__linking_suggestions__activity_id__confirm_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/planned-runs/{planned_session_id}/linking": {
         parameters: {
             query?: never;
@@ -151,23 +100,6 @@ export interface paths {
         };
         /** Get Link Evidence */
         get: operations["get_link_evidence_api_planned_runs__planned_session_id__linking_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/activities/{activity_id}/linking/suggestions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Activity Suggestions */
-        get: operations["get_activity_suggestions_api_activities__activity_id__linking_suggestions_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -193,7 +125,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/activities/{activity_id}/linking/links": {
+    "/api/activities/{activity_id}/linking/candidates/{planned_session_id}/confirm": {
         parameters: {
             query?: never;
             header?: never;
@@ -202,15 +134,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create Direct Link */
-        post: operations["create_direct_link_api_activities__activity_id__linking_links_post"];
+        /** Confirm Match */
+        post: operations["confirm_match_api_activities__activity_id__linking_candidates__planned_session_id__confirm_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/activities/{activity_id}/linking/links/{link_id}": {
+    "/api/activities/{activity_id}/linking/link": {
         parameters: {
             query?: never;
             header?: never;
@@ -218,11 +150,29 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Adjust Link */
-        put: operations["adjust_link_api_activities__activity_id__linking_links__link_id__put"];
-        post?: never;
-        /** Delete Link */
-        delete: operations["delete_link_api_activities__activity_id__linking_links__link_id__delete"];
+        /** Change Current Link */
+        put: operations["change_current_link_api_activities__activity_id__linking_link_put"];
+        /** Create Direct Link */
+        post: operations["create_direct_link_api_activities__activity_id__linking_link_post"];
+        /** Remove Current Link */
+        delete: operations["remove_current_link_api_activities__activity_id__linking_link_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/activities/{activity_id}/linking/legacy-resolution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve Legacy Links */
+        post: operations["resolve_legacy_links_api_activities__activity_id__linking_legacy_resolution_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -246,30 +196,14 @@ export interface components {
          * ActivityLinkStatus
          * @enum {string}
          */
-        ActivityLinkStatus: "unmatched" | "partly_linked" | "linked";
+        ActivityLinkStatus: "unmatched" | "linked" | "legacy_unresolved";
         /** ActivityLinkingRead */
         ActivityLinkingRead: {
             activity: components["schemas"]["CompletedActivityRead"];
-            /** Links */
-            links: components["schemas"]["ActivityLinkRead"][];
-            /** Remaining Duration Seconds */
-            remaining_duration_seconds: number;
-            /** Remaining Distance Metres */
-            remaining_distance_metres: number | null;
-        };
-        /** ActivityMatchSuggestionRead */
-        ActivityMatchSuggestionRead: {
-            /** Activity Id */
-            activity_id: string;
-            planned_run: components["schemas"]["PlannedRunRead"];
-            /** Algorithm Version */
-            algorithm_version: string;
-            /** Reasons */
-            reasons: string[];
-            /** Proposed Duration Seconds */
-            proposed_duration_seconds: number;
-            /** Proposed Distance Metres */
-            proposed_distance_metres: number | null;
+            link: components["schemas"]["ActivityLinkRead"] | null;
+            /** Candidates */
+            candidates: components["schemas"]["MatchCandidateRead"][];
+            legacy_resolution: components["schemas"]["LegacyResolutionRead"] | null;
         };
         /**
          * ActivityModality
@@ -318,10 +252,6 @@ export interface components {
         DirectLinkCreate: {
             /** Planned Session Id */
             planned_session_id: string;
-            /** Linked Duration Seconds */
-            linked_duration_seconds: number;
-            /** Linked Distance Metres */
-            linked_distance_metres?: number | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -352,24 +282,64 @@ export interface components {
                 [key: string]: string | number | null;
             };
         };
+        /** LegacyLinkRecordRead */
+        LegacyLinkRecordRead: {
+            /** Id */
+            id: string;
+            /** Planned Session Id */
+            planned_session_id: string;
+            planned_run: components["schemas"]["PlannedRunRead"];
+            /** Linked Duration Seconds */
+            linked_duration_seconds: number;
+            /** Linked Distance Metres */
+            linked_distance_metres: number | null;
+            /** Confirmation Source */
+            confirmation_source: string;
+            /** Version */
+            version: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** LegacyResolutionRead */
+        LegacyResolutionRead: {
+            /** Id */
+            id: string;
+            /** Status */
+            status: string;
+            /** Selected Planned Session Id */
+            selected_planned_session_id: string | null;
+            /** Resolved At */
+            resolved_at: string | null;
+            /** Records */
+            records: components["schemas"]["LegacyLinkRecordRead"][];
+        };
+        /** LegacyResolutionRequest */
+        LegacyResolutionRequest: {
+            /** Planned Session Id */
+            planned_session_id?: string | null;
+        };
         /** LinkActivityEvidenceRead */
         LinkActivityEvidenceRead: {
             link: components["schemas"]["LinkRead"];
             activity: components["schemas"]["CompletedActivityRead"];
-            /** Unmatched Duration Seconds */
-            unmatched_duration_seconds: number;
-            /** Unmatched Distance Metres */
-            unmatched_distance_metres: number | null;
+        };
+        /** LinkChange */
+        LinkChange: {
+            /** Planned Session Id */
+            planned_session_id: string;
         };
         /** LinkEvidenceRead */
         LinkEvidenceRead: {
             planned_run: components["schemas"]["PlannedRunRead"];
             /** Links */
             links: components["schemas"]["LinkActivityEvidenceRead"][];
-            /** Total Linked Duration Seconds */
-            total_linked_duration_seconds: number;
-            /** Total Linked Distance Metres */
-            total_linked_distance_metres: number | null;
+            /** Total Duration Seconds */
+            total_duration_seconds: number;
+            /** Total Distance Metres */
+            total_distance_metres: number | null;
             /** Duration Difference Seconds */
             duration_difference_seconds: number | null;
             /** Distance Difference Metres */
@@ -385,28 +355,17 @@ export interface components {
             planned_session_id: string;
             /** Completed Activity Id */
             completed_activity_id: string;
-            /** Linked Duration Seconds */
-            linked_duration_seconds: number;
-            /** Linked Distance Metres */
-            linked_distance_metres: number | null;
-            /** Confirmation Source */
-            confirmation_source: string;
-            /** Version */
-            version: number;
+            /** Source */
+            source: string;
+            /** Algorithm Version */
+            algorithm_version: string | null;
+            /** Reasons */
+            reasons: string[];
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
-        };
-        /** LinkUpdate */
-        LinkUpdate: {
-            /** Linked Duration Seconds */
-            linked_duration_seconds: number;
-            /** Linked Distance Metres */
-            linked_distance_metres?: number | null;
-            /** Expected Version */
-            expected_version: number;
         };
         /** ManualActivityCreate */
         ManualActivityCreate: {
@@ -425,21 +384,13 @@ export interface components {
             /** Notes */
             notes?: string | null;
         };
-        /** MatchSuggestionRead */
-        MatchSuggestionRead: {
-            /** Planned Session Id */
-            planned_session_id: string;
-            /** Prescription Revision Id */
-            prescription_revision_id: string;
-            activity: components["schemas"]["CompletedActivityRead"];
+        /** MatchCandidateRead */
+        MatchCandidateRead: {
+            planned_run: components["schemas"]["PlannedRunRead"];
             /** Algorithm Version */
             algorithm_version: string;
             /** Reasons */
             reasons: string[];
-            /** Proposed Duration Seconds */
-            proposed_duration_seconds: number;
-            /** Proposed Distance Metres */
-            proposed_distance_metres: number | null;
         };
         /** PlannedRunCreate */
         PlannedRunCreate: {
@@ -505,18 +456,6 @@ export interface components {
          * @enum {string}
          */
         Priority: "low" | "normal" | "high";
-        /** SuggestionConfirm */
-        SuggestionConfirm: {
-            /** Linked Duration Seconds */
-            linked_duration_seconds?: number | null;
-            /** Linked Distance Metres */
-            linked_distance_metres?: number | null;
-        };
-        /** SuggestionDecisionRead */
-        SuggestionDecisionRead: {
-            /** Decision */
-            decision: string;
-        };
         /**
          * TrainingIntent
          * @enum {string}
@@ -741,105 +680,6 @@ export interface operations {
             };
         };
     };
-    get_suggestions_api_planned_runs__planned_session_id__linking_suggestions_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                planned_session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MatchSuggestionRead"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    reject_match_suggestion_api_planned_runs__planned_session_id__linking_suggestions__activity_id__reject_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                planned_session_id: string;
-                activity_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuggestionDecisionRead"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    confirm_match_suggestion_api_planned_runs__planned_session_id__linking_suggestions__activity_id__confirm_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                planned_session_id: string;
-                activity_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SuggestionConfirm"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LinkRead"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_link_evidence_api_planned_runs__planned_session_id__linking_get: {
         parameters: {
             query?: never;
@@ -858,37 +698,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LinkEvidenceRead"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_activity_suggestions_api_activities__activity_id__linking_suggestions_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                activity_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ActivityMatchSuggestionRead"][];
                 };
             };
             /** @description Validation Error */
@@ -933,7 +742,74 @@ export interface operations {
             };
         };
     };
-    create_direct_link_api_activities__activity_id__linking_links_post: {
+    confirm_match_api_activities__activity_id__linking_candidates__planned_session_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                activity_id: string;
+                planned_session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_current_link_api_activities__activity_id__linking_link_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                activity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_direct_link_api_activities__activity_id__linking_link_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -968,30 +844,23 @@ export interface operations {
             };
         };
     };
-    adjust_link_api_activities__activity_id__linking_links__link_id__put: {
+    remove_current_link_api_activities__activity_id__linking_link_delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 activity_id: string;
-                link_id: string;
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LinkUpdate"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["LinkRead"];
-                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -1004,26 +873,29 @@ export interface operations {
             };
         };
     };
-    delete_link_api_activities__activity_id__linking_links__link_id__delete: {
+    resolve_legacy_links_api_activities__activity_id__linking_legacy_resolution_post: {
         parameters: {
-            query: {
-                expected_version: number;
-            };
+            query?: never;
             header?: never;
             path: {
                 activity_id: string;
-                link_id: string;
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LegacyResolutionRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ActivityLinkingRead"];
+                };
             };
             /** @description Validation Error */
             422: {

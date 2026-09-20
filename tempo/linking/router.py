@@ -1,3 +1,6 @@
+from datetime import UTC, datetime
+from collections.abc import Callable
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -5,119 +8,34 @@ from sqlalchemy.orm import Session
 from tempo.activities.models import CompletedActivity
 from tempo.activities.router import activity_link_status, activity_response
 from tempo.database import get_session
-from tempo.planning.models import PlannedSession
-from tempo.linking.models import Link
+from tempo.linking.models import LegacyLinkRecord, LegacyLinkResolution, Link
 from tempo.linking.schemas import (
     ActivityLinkRead,
     ActivityLinkingRead,
-    ActivityMatchSuggestionRead,
     DirectLinkCreate,
+    LegacyLinkRecordRead,
+    LegacyResolutionRead,
+    LegacyResolutionRequest,
     LinkActivityEvidenceRead,
+    LinkChange,
     LinkEvidenceRead,
     LinkRead,
-    LinkUpdate,
-    MatchSuggestionRead,
-    SuggestionConfirm,
-    SuggestionDecisionRead,
+    MatchCandidateRead,
 )
 from tempo.linking.service import (
     ALGORITHM_VERSION,
     LinkConflict,
-    linked_totals,
-    confirm_suggestion,
-    create_link,
-    list_suggestions,
+    change_link,
+    confirm_candidate,
+    create_direct_link as create_direct,
+    list_candidates,
     load_planned_session,
-    reject_suggestion,
-    remove_link,
-    update_link,
+    reasons_for,
 )
+from tempo.planning.models import PlannedSession
 
 router = APIRouter(prefix="/api/planned-runs", tags=["linking"])
 activity_router = APIRouter(prefix="/api/activities", tags=["linking"])
-
-
-@activity_router.get(
-    "/{activity_id}/linking/suggestions",
-    response_model=list[ActivityMatchSuggestionRead],
-)
-def get_activity_suggestions(
-    activity_id: str, session: Session = Depends(get_session)
-) -> list[ActivityMatchSuggestionRead]:
-    activity = session.get(CompletedActivity, activity_id)
-    if activity is None:
-        raise HTTPException(status_code=404, detail="Completed Activity not found.")
-    suggestions: list[tuple[float, str, ActivityMatchSuggestionRead]] = []
-    for planned_session in session.scalars(select(PlannedSession)):
-        candidate = next(
-            (
-                values
-                for values in list_suggestions(session, planned_session)
-                if values[0].id == activity.id
-            ),
-            None,
-        )
-        if candidate is None or planned_session.active_revision is None:
-            continue
-        _, reasons, duration, distance = candidate
-        day_distance = abs((activity.start_instant.date() - planned_session.scheduled_date).days)
-        suggestions.append(
-            (
-                day_distance,
-                planned_session.id,
-                ActivityMatchSuggestionRead(
-                    activity_id=activity.id,
-                    planned_run=planned_session,
-                    algorithm_version=ALGORITHM_VERSION,
-                    reasons=reasons,
-                    proposed_duration_seconds=duration,
-                    proposed_distance_metres=distance,
-                ),
-            )
-        )
-    suggestions.sort(key=lambda item: (item[0], item[1]))
-    return [item[2] for item in suggestions]
-
-
-@router.get(
-    "/{planned_session_id}/linking/suggestions",
-    response_model=list[MatchSuggestionRead],
-)
-def get_suggestions(
-    planned_session_id: str, session: Session = Depends(get_session)
-) -> list[MatchSuggestionRead]:
-    planned_session = load_planned_session(session, planned_session_id)
-    if planned_session is None:
-        raise HTTPException(status_code=404, detail="Planned Run not found.")
-    revision = planned_session.active_revision
-    if revision is None:
-        return []
-    return [
-        MatchSuggestionRead(
-            planned_session_id=planned_session.id,
-            prescription_revision_id=revision.id,
-            activity=activity_response(
-                activity, activity_link_status(session, activity.id)
-            ),
-            algorithm_version=ALGORITHM_VERSION,
-            reasons=reasons,
-            proposed_duration_seconds=duration,
-            proposed_distance_metres=distance,
-        )
-        for activity, reasons, duration, distance in list_suggestions(session, planned_session)
-    ]
-
-
-def require_records(
-    session: Session, planned_session_id: str, activity_id: str
-) -> tuple[PlannedSession, CompletedActivity]:
-    planned_session = load_planned_session(session, planned_session_id)
-    if planned_session is None:
-        raise HTTPException(status_code=404, detail="Planned Run not found.")
-    activity = session.get(CompletedActivity, activity_id)
-    if activity is None:
-        raise HTTPException(status_code=404, detail="Completed Activity not found.")
-    return planned_session, activity
 
 
 def require_activity(session: Session, activity_id: str) -> CompletedActivity:
@@ -127,52 +45,118 @@ def require_activity(session: Session, activity_id: str) -> CompletedActivity:
     return activity
 
 
-def require_link(session: Session, activity_id: str, link_id: str) -> Link:
-    link = session.scalar(
-        select(Link).where(
-            Link.id == link_id,
-            Link.completed_activity_id == activity_id,
-        )
+def require_plan(session: Session, planned_session_id: str) -> PlannedSession:
+    planned_session = load_planned_session(session, planned_session_id)
+    if planned_session is None:
+        raise HTTPException(status_code=404, detail="Planned Run not found.")
+    return planned_session
+
+
+def link_read(link: Link) -> LinkRead:
+    return LinkRead(
+        id=link.id,
+        planned_session_id=link.planned_session_id,
+        completed_activity_id=link.completed_activity_id,
+        source=link.source,
+        algorithm_version=link.algorithm_version,
+        reasons=reasons_for(link),
+        created_at=link.created_at,
     )
-    if link is None:
-        raise HTTPException(status_code=404, detail="Link not found.")
-    return link
 
 
-@activity_router.get(
-    "/{activity_id}/linking", response_model=ActivityLinkingRead
-)
+def legacy_read(session: Session, resolution: LegacyLinkResolution) -> LegacyResolutionRead:
+    records = []
+    for record in session.scalars(
+        select(LegacyLinkRecord)
+        .where(LegacyLinkRecord.resolution_id == resolution.id)
+        .order_by(LegacyLinkRecord.created_at, LegacyLinkRecord.id)
+    ):
+        planned_run = require_plan(session, record.planned_session_id)
+        records.append(
+            LegacyLinkRecordRead(
+                id=record.id,
+                planned_session_id=record.planned_session_id,
+                planned_run=planned_run,
+                linked_duration_seconds=record.linked_duration_seconds,
+                linked_distance_metres=record.linked_distance_metres,
+                confirmation_source=record.confirmation_source,
+                version=record.version,
+                created_at=record.created_at,
+            )
+        )
+    return LegacyResolutionRead(
+        id=resolution.id,
+        status=resolution.status,
+        selected_planned_session_id=resolution.selected_planned_session_id,
+        resolved_at=resolution.resolved_at,
+        records=records,
+    )
+
+
+@activity_router.get("/{activity_id}/linking", response_model=ActivityLinkingRead)
 def get_activity_linking(
     activity_id: str, session: Session = Depends(get_session)
 ) -> ActivityLinkingRead:
     activity = require_activity(session, activity_id)
-    links = list(
-        session.scalars(
-            select(Link)
-            .where(Link.completed_activity_id == activity_id)
-            .order_by(Link.created_at, Link.id)
+    link = session.scalar(select(Link).where(Link.completed_activity_id == activity_id))
+    activity_link = None
+    if link is not None:
+        activity_link = ActivityLinkRead(
+            link=link_read(link), planned_run=require_plan(session, link.planned_session_id)
+        )
+    resolution = session.scalar(
+        select(LegacyLinkResolution).where(
+            LegacyLinkResolution.completed_activity_id == activity_id
         )
     )
-    link_reads: list[ActivityLinkRead] = []
-    for link in links:
-        planned_session = load_planned_session(session, link.planned_session_id)
-        if planned_session is not None:
-            link_reads.append(ActivityLinkRead(link=link, planned_run=planned_session))
-    linked_duration, linked_distance = linked_totals(session, activity_id)
     return ActivityLinkingRead(
         activity=activity_response(activity, activity_link_status(session, activity_id)),
-        links=link_reads,
-        remaining_duration_seconds=activity.duration_seconds - linked_duration,
-        remaining_distance_metres=(
-            activity.distance_metres - linked_distance
-            if activity.distance_metres is not None
-            else None
-        ),
+        link=activity_link,
+        candidates=[
+            MatchCandidateRead(
+                planned_run=planned_run,
+                algorithm_version=ALGORITHM_VERSION,
+                reasons=reasons,
+            )
+            for planned_run, reasons in list_candidates(session, activity)
+        ],
+        legacy_resolution=legacy_read(session, resolution) if resolution else None,
+    )
+
+
+def mutate_link(
+    session: Session, operation: Callable[[], Link]
+) -> Link:
+    try:
+        link = operation()
+        session.commit()
+        session.refresh(link)
+        return link
+    except LinkConflict as error:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@activity_router.post(
+    "/{activity_id}/linking/candidates/{planned_session_id}/confirm",
+    response_model=LinkRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def confirm_match(
+    activity_id: str,
+    planned_session_id: str,
+    session: Session = Depends(get_session),
+) -> LinkRead:
+    session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    activity = require_activity(session, activity_id)
+    planned_session = require_plan(session, planned_session_id)
+    return link_read(
+        mutate_link(session, lambda: confirm_candidate(session, planned_session, activity))
     )
 
 
 @activity_router.post(
-    "/{activity_id}/linking/links",
+    "/{activity_id}/linking/link",
     response_model=LinkRead,
     status_code=status.HTTP_201_CREATED,
 )
@@ -180,125 +164,88 @@ def create_direct_link(
     activity_id: str,
     request: DirectLinkCreate,
     session: Session = Depends(get_session),
-) -> Link:
-    session.connection().exec_driver_sql("BEGIN IMMEDIATE")
-    planned_session, activity = require_records(
-        session, request.planned_session_id, activity_id
-    )
-    try:
-        return create_link(
-            session,
-            planned_session,
-            activity,
-            request.linked_duration_seconds,
-            request.linked_distance_metres,
-            "direct",
-        )
-    except LinkConflict as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-
-
-@activity_router.put(
-    "/{activity_id}/linking/links/{link_id}",
-    response_model=LinkRead,
-)
-def adjust_link(
-    activity_id: str,
-    link_id: str,
-    request: LinkUpdate,
-    session: Session = Depends(get_session),
-) -> Link:
+) -> LinkRead:
     session.connection().exec_driver_sql("BEGIN IMMEDIATE")
     activity = require_activity(session, activity_id)
-    link = require_link(session, activity_id, link_id)
-    try:
-        return update_link(
-            session,
-            link,
-            activity,
-            request.linked_duration_seconds,
-            request.linked_distance_metres,
-            request.expected_version,
-        )
-    except LinkConflict as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
+    planned_session = require_plan(session, request.planned_session_id)
+    return link_read(mutate_link(session, lambda: create_direct(session, planned_session, activity)))
+
+
+@activity_router.put("/{activity_id}/linking/link", response_model=LinkRead)
+def change_current_link(
+    activity_id: str,
+    request: LinkChange,
+    session: Session = Depends(get_session),
+) -> LinkRead:
+    session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    require_activity(session, activity_id)
+    link = session.scalar(select(Link).where(Link.completed_activity_id == activity_id))
+    if link is None:
+        raise HTTPException(status_code=404, detail="Link not found.")
+    planned_session = require_plan(session, request.planned_session_id)
+    return link_read(mutate_link(session, lambda: change_link(session, link, planned_session)))
 
 
 @activity_router.delete(
-    "/{activity_id}/linking/links/{link_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
+    "/{activity_id}/linking/link", status_code=status.HTTP_204_NO_CONTENT
 )
-def delete_link(
-    activity_id: str,
-    link_id: str,
-    expected_version: int,
-    session: Session = Depends(get_session),
+def remove_current_link(
+    activity_id: str, session: Session = Depends(get_session)
 ) -> None:
     session.connection().exec_driver_sql("BEGIN IMMEDIATE")
     require_activity(session, activity_id)
-    link = require_link(session, activity_id, link_id)
-    try:
-        remove_link(session, link, expected_version)
-    except LinkConflict as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
+    link = session.scalar(select(Link).where(Link.completed_activity_id == activity_id))
+    if link is None:
+        raise HTTPException(status_code=404, detail="Link not found.")
+    session.delete(link)
+    session.commit()
 
 
-@router.post(
-    "/{planned_session_id}/linking/suggestions/{activity_id}/reject",
-    response_model=SuggestionDecisionRead,
+@activity_router.post(
+    "/{activity_id}/linking/legacy-resolution", response_model=ActivityLinkingRead
 )
-def reject_match_suggestion(
-    planned_session_id: str,
+def resolve_legacy_links(
     activity_id: str,
+    request: LegacyResolutionRequest,
     session: Session = Depends(get_session),
-) -> SuggestionDecisionRead:
+) -> ActivityLinkingRead:
     session.connection().exec_driver_sql("BEGIN IMMEDIATE")
-    planned_session, activity = require_records(session, planned_session_id, activity_id)
-    try:
-        reject_suggestion(session, planned_session, activity)
-    except LinkConflict as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    return SuggestionDecisionRead(decision="rejected")
-
-
-@router.post(
-    "/{planned_session_id}/linking/suggestions/{activity_id}/confirm",
-    response_model=LinkRead,
-    status_code=status.HTTP_201_CREATED,
-)
-def confirm_match_suggestion(
-    planned_session_id: str,
-    activity_id: str,
-    request: SuggestionConfirm,
-    session: Session = Depends(get_session),
-) -> Link:
-    # SQLite has no row-level locks; reserve the single writer before reading capacity.
-    session.connection().exec_driver_sql("BEGIN IMMEDIATE")
-    planned_session, activity = require_records(session, planned_session_id, activity_id)
-    try:
-        return confirm_suggestion(
-            session,
-            planned_session,
-            activity,
-            request.linked_duration_seconds,
-            request.linked_distance_metres,
-            "linked_distance_metres" not in request.model_fields_set,
+    activity = require_activity(session, activity_id)
+    resolution = session.scalar(
+        select(LegacyLinkResolution).where(
+            LegacyLinkResolution.completed_activity_id == activity_id,
+            LegacyLinkResolution.status == "unresolved",
         )
-    except LinkConflict as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
+    )
+    if resolution is None:
+        raise HTTPException(status_code=409, detail="No unresolved legacy Links remain.")
+    if request.planned_session_id is not None:
+        preserved = session.scalar(
+            select(LegacyLinkRecord.id).where(
+                LegacyLinkRecord.resolution_id == resolution.id,
+                LegacyLinkRecord.planned_session_id == request.planned_session_id,
+            )
+        )
+        if preserved is None:
+            raise HTTPException(status_code=409, detail="Select one of the preserved legacy Links.")
+        planned_session = require_plan(session, request.planned_session_id)
+        try:
+            create_direct(session, planned_session, activity, allow_legacy_resolution=True)
+        except LinkConflict as error:
+            session.rollback()
+            raise HTTPException(status_code=409, detail=str(error)) from error
+    resolution.status = "resolved"
+    resolution.selected_planned_session_id = request.planned_session_id
+    resolution.resolved_at = datetime.now(UTC)
+    session.commit()
+    return get_activity_linking(activity_id, session)
 
 
-@router.get(
-    "/{planned_session_id}/linking",
-    response_model=LinkEvidenceRead,
-)
+@router.get("/{planned_session_id}/linking", response_model=LinkEvidenceRead)
 def get_link_evidence(
     planned_session_id: str, session: Session = Depends(get_session)
 ) -> LinkEvidenceRead:
-    planned_session = load_planned_session(session, planned_session_id)
-    if planned_session is None:
-        raise HTTPException(status_code=404, detail="Planned Run not found.")
-    revision = planned_session.active_revision
+    planned_session = require_plan(session, planned_session_id)
     links = list(
         session.scalars(
             select(Link)
@@ -306,49 +253,38 @@ def get_link_evidence(
             .order_by(Link.created_at, Link.id)
         )
     )
-    evidence: list[LinkActivityEvidenceRead] = []
-    total_linked_duration = 0
-    linked_distances: list[int] = []
+    evidence = []
+    total_duration = 0
+    distances = []
     for link in links:
-        activity = session.get(CompletedActivity, link.completed_activity_id)
-        if activity is None:
-            continue
-        total_duration, total_distance = linked_totals(session, activity.id)
-        total_linked_duration += link.linked_duration_seconds
-        if link.linked_distance_metres is not None:
-            linked_distances.append(link.linked_distance_metres)
+        activity = require_activity(session, link.completed_activity_id)
+        total_duration += activity.duration_seconds
+        distances.append(activity.distance_metres)
         evidence.append(
             LinkActivityEvidenceRead(
-                link=link,
-                activity=activity_response(activity, activity_link_status(session, activity.id)),
-                unmatched_duration_seconds=activity.duration_seconds - total_duration,
-                unmatched_distance_metres=(
-                    activity.distance_metres - total_distance
-                    if activity.distance_metres is not None
-                    else None
-                ),
+                link=link_read(link),
+                activity=activity_response(activity, "linked"),
             )
         )
-    total_linked_distance = (
-        sum(linked_distances)
-        if links and len(linked_distances) == len(links)
+    total_distance = (
+        sum(distance for distance in distances if distance is not None)
+        if links and all(distance is not None for distance in distances)
         else None
     )
+    revision = planned_session.active_revision
     return LinkEvidenceRead(
         planned_run=planned_session,
         links=evidence,
-        total_linked_duration_seconds=total_linked_duration,
-        total_linked_distance_metres=total_linked_distance,
+        total_duration_seconds=total_duration,
+        total_distance_metres=total_distance,
         duration_difference_seconds=(
-            revision.duration_seconds - total_linked_duration
-            if revision is not None and revision.duration_seconds is not None and links
+            revision.duration_seconds - total_duration
+            if revision and revision.duration_seconds is not None and links
             else None
         ),
         distance_difference_metres=(
-            revision.distance_metres - total_linked_distance
-            if revision is not None
-            and revision.distance_metres is not None
-            and total_linked_distance is not None
+            revision.distance_metres - total_distance
+            if revision and revision.distance_metres is not None and total_distance is not None
             else None
         ),
     )

@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import json
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tempo.activities.fit_adapter import FitImportError
@@ -51,17 +51,18 @@ def activity_response(
 
 
 def activity_link_status(session: Session, activity_id: str) -> str:
-    from tempo.linking.models import Link
+    from tempo.linking.models import LegacyLinkResolution, Link
 
-    activity = session.get(CompletedActivity, activity_id)
-    linked = session.scalar(
-        select(func.coalesce(func.sum(Link.linked_duration_seconds), 0)).where(
-            Link.completed_activity_id == activity_id
+    unresolved = session.scalar(
+        select(LegacyLinkResolution.id).where(
+            LegacyLinkResolution.completed_activity_id == activity_id,
+            LegacyLinkResolution.status == "unresolved",
         )
     )
-    if activity is None or not linked:
-        return "unmatched"
-    return "linked" if linked >= activity.duration_seconds else "partly_linked"
+    if unresolved is not None:
+        return "legacy_unresolved"
+    linked = session.scalar(select(Link.id).where(Link.completed_activity_id == activity_id))
+    return "linked" if linked is not None else "unmatched"
 
 
 @router.post(
@@ -85,6 +86,10 @@ def create_manual_activity(
         created_at=datetime.now(UTC),
     )
     session.add(activity)
+    session.flush()
+    from tempo.linking.service import evaluate_after_ingestion
+
+    evaluate_after_ingestion(session, activity)
     session.commit()
     session.refresh(activity)
     return activity_response(activity, activity_link_status(session, activity.id))

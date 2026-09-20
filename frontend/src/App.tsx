@@ -5,7 +5,6 @@ type PlannedRunCreate = components["schemas"]["PlannedRunCreate"];
 type PlannedRun = components["schemas"]["PlannedRunRead"];
 type ManualActivityCreate = components["schemas"]["ManualActivityCreate"];
 type CompletedActivity = components["schemas"]["CompletedActivityRead"];
-type ActivityMatchSuggestion = components["schemas"]["ActivityMatchSuggestionRead"];
 type ActivityLinking = components["schemas"]["ActivityLinkingRead"];
 type LinkEvidence = components["schemas"]["LinkEvidenceRead"];
 type ValidationError = components["schemas"]["HTTPValidationError"];
@@ -21,8 +20,8 @@ const intentLabels: Record<PlannedRunCreate["training_intent"], string> = {
 
 const linkStatusLabels: Record<ActivityLinkStatus, string> = {
   unmatched: "Unmatched",
-  partly_linked: "Partly linked",
   linked: "Linked",
+  legacy_unresolved: "Legacy Links need resolution",
 };
 
 function plannedRunId(): string | null {
@@ -71,7 +70,6 @@ export function App() {
   const [run, setRun] = useState<PlannedRun | null>(null);
   const [activity, setActivity] = useState<CompletedActivity | null>(null);
   const [activities, setActivities] = useState<CompletedActivity[]>([]);
-  const [activitySuggestions, setActivitySuggestions] = useState<ActivityMatchSuggestion[]>([]);
   const [activityLinking, setActivityLinking] = useState<ActivityLinking | null>(null);
   const [plannedRuns, setPlannedRuns] = useState<PlannedRun[]>([]);
   const [evidence, setEvidence] = useState<LinkEvidence | null>(null);
@@ -194,9 +192,7 @@ export function App() {
     const created = (await response.json()) as CompletedActivity;
     window.history.pushState({}, "", `/activities/${created.id}`);
     setActivity(created);
-    if (await refreshActivityLinking(created.id)) {
-      setStatus("Saved as unmatched training evidence. Review any suggested Planned Run match below.");
-    }
+    if (await refreshActivityLinking(created.id)) setStatus("Saved. Matching evaluated; review the result below.");
   }
 
   async function importActivity(event: FormEvent<HTMLFormElement>) {
@@ -217,19 +213,7 @@ export function App() {
     const imported = (await response.json()) as CompletedActivity;
     window.history.pushState({}, "", `/activities/${imported.id}`);
     setActivity(imported);
-    if (await refreshActivityLinking(imported.id)) {
-      setStatus("Imported as unmatched training evidence. Review any suggested Planned Run match below.");
-    }
-  }
-
-  async function refreshActivitySuggestions(completedActivityId: string): Promise<boolean> {
-    const response = await fetch(`/api/activities/${completedActivityId}/linking/suggestions`);
-    if (!response.ok) {
-      setStatus("Planned Run suggestions could not be loaded.");
-      return false;
-    }
-    setActivitySuggestions((await response.json()) as ActivityMatchSuggestion[]);
-    return true;
+    if (await refreshActivityLinking(imported.id)) setStatus("Imported. Matching evaluated; review the result below.");
   }
 
   async function refreshActivityLinking(completedActivityId: string): Promise<boolean> {
@@ -245,58 +229,24 @@ export function App() {
     setActivity((await activityResponse.json()) as CompletedActivity);
     setActivityLinking((await linkingResponse.json()) as ActivityLinking);
     setPlannedRuns((await plansResponse.json()) as PlannedRun[]);
-    return refreshActivitySuggestions(completedActivityId);
+    return true;
   }
 
-  async function rejectSuggestion(plannedSessionId: string) {
+  async function confirmCandidate(plannedSessionId: string) {
     if (!activity) return;
+    setErrors({});
     const response = await fetch(
-      `/api/planned-runs/${plannedSessionId}/linking/suggestions/${activity.id}/reject`,
+      `/api/activities/${activity.id}/linking/candidates/${plannedSessionId}/confirm`,
       { method: "POST" },
     );
     if (!response.ok) {
-      const result = (await response.json()) as { detail?: string };
-      setStatus(result.detail || "Suggestion could not be rejected.");
-      return;
-    }
-    await refreshActivitySuggestions(activity.id);
-    setStatus("Suggestion rejected. The Planned Session and Completed Activity remain unchanged.");
-  }
-
-  async function confirmSuggestion(event: FormEvent<HTMLFormElement>, plannedSessionId: string) {
-    event.preventDefault();
-    if (!activity) return;
-    setErrors({});
-    const form = new FormData(event.currentTarget);
-    const duration = Number(form.get("linked_duration_minutes"));
-    const distanceInput = String(form.get("linked_distance_kilometres"));
-    const body = {
-      linked_duration_seconds: Math.round(duration * 60),
-      linked_distance_metres: distanceInput === "" ? null : Math.round(Number(distanceInput) * 1000),
-    };
-    const response = await fetch(
-      `/api/planned-runs/${plannedSessionId}/linking/suggestions/${activity.id}/confirm`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
-    );
-    if (!response.ok) {
       const result = (await response.json()) as { detail?: unknown };
-      const detail = result.detail;
-      const message = typeof detail === "string" ? detail : "Enter positive linked amounts within the activity's remaining evidence.";
-      setErrors({ [`link-${plannedSessionId}`]: message });
-      setStatus("Link was not confirmed. Review the linked amount.");
+      setErrors({ [`link-${plannedSessionId}`]: typeof result.detail === "string" ? result.detail : "The candidate is no longer eligible." });
+      setStatus("Link was not confirmed. Review the conflict.");
       return;
     }
     await refreshActivityLinking(activity.id);
     setStatus("Link confirmed. Session Outcome remains not recorded.");
-  }
-
-  function linkBody(form: FormData) {
-    const duration = Number(form.get("linked_duration_minutes"));
-    const distanceInput = String(form.get("linked_distance_kilometres"));
-    return {
-      linked_duration_seconds: Math.round(duration * 60),
-      linked_distance_metres: distanceInput === "" ? null : Math.round(Number(distanceInput) * 1000),
-    };
   }
 
   async function createDirectLink(event: FormEvent<HTMLFormElement>) {
@@ -304,43 +254,44 @@ export function App() {
     if (!activity) return;
     setErrors({});
     const form = new FormData(event.currentTarget);
-    const response = await fetch(`/api/activities/${activity.id}/linking/links`, {
+    const response = await fetch(`/api/activities/${activity.id}/linking/link`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ planned_session_id: String(form.get("planned_session_id")), ...linkBody(form) }),
+      body: JSON.stringify({ planned_session_id: String(form.get("planned_session_id")) }),
     });
     if (!response.ok) {
       const result = (await response.json()) as { detail?: unknown };
-      setErrors({ directLink: typeof result.detail === "string" ? result.detail : "Enter positive linked amounts within the remaining evidence." });
-      setStatus("Direct link was not created. Review the linked amounts.");
+      setErrors({ directLink: typeof result.detail === "string" ? result.detail : "The direct Link could not be created." });
+      setStatus("Direct Link was not created. Review the conflict.");
       return;
     }
     await refreshActivityLinking(activity.id);
-    setStatus("Direct link created. Remaining evidence stays visible.");
+    setStatus("Direct Link created for the complete activity. Session Outcome remains not recorded.");
   }
 
-  async function updateDirectLink(event: FormEvent<HTMLFormElement>, linkId: string, version: number) {
+  async function changeDirectLink(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!activity) return;
     setErrors({});
-    const response = await fetch(`/api/activities/${activity.id}/linking/links/${linkId}`, {
+    const form = new FormData(event.currentTarget);
+    const response = await fetch(`/api/activities/${activity.id}/linking/link`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...linkBody(new FormData(event.currentTarget)), expected_version: version }),
+      body: JSON.stringify({ planned_session_id: String(form.get("planned_session_id")) }),
     });
     if (!response.ok) {
       const result = (await response.json()) as { detail?: unknown };
-      setErrors({ [`edit-${linkId}`]: typeof result.detail === "string" ? result.detail : "The link could not be updated." });
-      setStatus("Link was not updated. Review the linked amounts.");
+      setErrors({ changeLink: typeof result.detail === "string" ? result.detail : "The Link could not be changed." });
+      setStatus("Link was not changed. Review the conflict.");
       return;
     }
     await refreshActivityLinking(activity.id);
-    setStatus("Link updated. Remaining evidence recalculated.");
+    setStatus("Link changed. The complete activity now belongs to the selected Planned Run.");
   }
 
-  async function removeDirectLink(linkId: string, version: number) {
+  async function removeDirectLink() {
     if (!activity) return;
-    const response = await fetch(`/api/activities/${activity.id}/linking/links/${linkId}?expected_version=${version}`, { method: "DELETE" });
+    const response = await fetch(`/api/activities/${activity.id}/linking/link`, { method: "DELETE" });
     if (!response.ok) {
       const result = (await response.json()) as { detail?: string };
       setStatus(result.detail || "Link could not be removed.");
@@ -348,6 +299,22 @@ export function App() {
     }
     await refreshActivityLinking(activity.id);
     setStatus("Link removed. The observed evidence remains in the local record.");
+  }
+
+  async function resolveLegacy(plannedSessionId: string | null) {
+    if (!activity) return;
+    const response = await fetch(`/api/activities/${activity.id}/linking/legacy-resolution`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ planned_session_id: plannedSessionId }),
+    });
+    if (!response.ok) {
+      const result = (await response.json()) as { detail?: string };
+      setStatus(result.detail || "Legacy Links could not be resolved.");
+      return;
+    }
+    await refreshActivityLinking(activity.id);
+    setStatus(plannedSessionId ? "Legacy Links resolved to the selected Planned Run. Preserved relationships remain in history." : "Legacy Links resolved with no current Link. Preserved relationships remain in history.");
   }
 
   const showingActivity = currentRoute !== "run" || activity !== null;
@@ -384,7 +351,7 @@ export function App() {
         </p>
       </section>
       <p className="status" role="status" aria-live="polite">{loading ? "Loading local record..." : status}</p>
-      {activity ? <ActivityDetail activity={activity} suggestions={activitySuggestions} linking={activityLinking} plannedRuns={plannedRuns} errors={errors} onReject={rejectSuggestion} onConfirm={confirmSuggestion} onCreateDirect={createDirectLink} onUpdate={updateDirectLink} onRemove={removeDirectLink} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : currentRoute === "activity-import" ? <ImportForm onSubmit={importActivity} errors={errors} /> : run ? <RunDetail run={run} evidence={evidence} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
+      {activity ? <ActivityDetail activity={activity} linking={activityLinking} plannedRuns={plannedRuns} errors={errors} onConfirm={confirmCandidate} onCreateDirect={createDirectLink} onChange={changeDirectLink} onRemove={removeDirectLink} onResolveLegacy={resolveLegacy} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : currentRoute === "activity-import" ? <ImportForm onSubmit={importActivity} errors={errors} /> : run ? <RunDetail run={run} evidence={evidence} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
     </main>
   );
 }
@@ -482,26 +449,24 @@ function ActivityList({ activities }: { activities: CompletedActivity[] }) {
 
 function ActivityDetail({
   activity,
-  suggestions,
   linking,
   plannedRuns,
   errors,
-  onReject,
   onConfirm,
   onCreateDirect,
-  onUpdate,
+  onChange,
   onRemove,
+  onResolveLegacy,
 }: {
   activity: CompletedActivity;
-  suggestions: ActivityMatchSuggestion[];
   linking: ActivityLinking | null;
   plannedRuns: PlannedRun[];
   errors: Record<string, string>;
-  onReject: (plannedSessionId: string) => void;
-  onConfirm: (event: FormEvent<HTMLFormElement>, plannedSessionId: string) => void;
+  onConfirm: (plannedSessionId: string) => void;
   onCreateDirect: (event: FormEvent<HTMLFormElement>) => void;
-  onUpdate: (event: FormEvent<HTMLFormElement>, linkId: string, version: number) => void;
-  onRemove: (linkId: string, version: number) => void;
+  onChange: (event: FormEvent<HTMLFormElement>) => void;
+  onRemove: () => void;
+  onResolveLegacy: (plannedSessionId: string | null) => void;
 }) {
   const provenance = activity.import_provenance;
   return (
@@ -536,58 +501,48 @@ function ActivityDetail({
     </article>
     {linking && (
       <section className="linking-panel confirmed-panel" aria-label="Confirmed Links">
-        <div className="section-heading"><div><span className="revision">Confirmed Links</span><h2>Link observed evidence</h2></div></div>
-        <p>{formatDuration(linking.remaining_duration_seconds)} remaining{linking.remaining_distance_metres === null ? "" : ` / ${linking.remaining_distance_metres / 1000} km remaining`}</p>
-        {linking.links.map(({ link, planned_run: plannedRun }) => {
-          const label = `${intentLabels[plannedRun.training_intent]} on ${plannedRun.scheduled_date}`;
-          const linkError = errors[`edit-${link.id}`];
-          const errorId = `edit-link-error-${link.id}`;
-          return (
-            <form className="suggestion-card" aria-label={`Link to ${label}`} key={link.id} onSubmit={(event) => onUpdate(event, link.id, link.version)}>
-              <div><strong>{label}</strong><small>{link.confirmation_source === "direct" ? "Direct Link" : "Confirmed suggestion"}</small></div>
-              <div className="link-fields">
-                 <label><span>Linked duration</span><span className="unit-input"><input name="linked_duration_minutes" type="number" min="0.0167" step="any" required defaultValue={link.linked_duration_seconds / 60} aria-invalid={Boolean(linkError)} aria-describedby={linkError ? errorId : undefined} /><b>min</b></span></label>
-                 <label><span>Linked distance <i>Optional</i></span><span className="unit-input"><input name="linked_distance_kilometres" type="number" min="0.001" step="any" defaultValue={link.linked_distance_metres === null ? "" : link.linked_distance_metres / 1000} aria-invalid={Boolean(linkError)} aria-describedby={linkError ? errorId : undefined} /><b>km</b></span></label>
-              </div>
-              {linkError && <small className="error" id={errorId}>{linkError}</small>}
-              <div className="suggestion-actions"><button type="button" className="secondary-button" onClick={() => onRemove(link.id, link.version)}>Remove Link</button><button type="submit">Save Link</button></div>
-            </form>
-          );
-        })}
-        <form className="suggestion-card" aria-label="Create direct Link" onSubmit={onCreateDirect}>
+        <div className="section-heading"><div><span className="revision">Whole-activity Link</span><h2>Activity ownership</h2></div></div>
+        {linking.link ? (
+          <form className="suggestion-card" aria-label="Change current Link" onSubmit={onChange}>
+            <div><strong>{intentLabels[linking.link.planned_run.training_intent]} on {linking.link.planned_run.scheduled_date}</strong><small>{linking.link.link.source.replace("_", " ")} / complete activity</small></div>
+            {linking.link.link.reasons.length > 0 && <ul>{linking.link.link.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>}
+            <label><span>Move to Planned Run</span><select name="planned_session_id" required defaultValue={linking.link.planned_run.id}>{plannedRuns.map((plannedRun) => <option key={plannedRun.id} value={plannedRun.id}>{intentLabels[plannedRun.training_intent]} on {plannedRun.scheduled_date}</option>)}</select></label>
+            {errors.changeLink && <small className="error" id="change-link-error">{errors.changeLink}</small>}
+            <div className="suggestion-actions"><button type="button" className="secondary-button" onClick={onRemove}>Remove Link</button><button type="submit">Change Link</button></div>
+          </form>
+        ) : !linking.legacy_resolution || linking.legacy_resolution.status === "resolved" ? <form className="suggestion-card" aria-label="Create direct Link" onSubmit={onCreateDirect}>
           <label><span>Planned Run</span><select name="planned_session_id" required defaultValue=""><option value="" disabled>Choose a Planned Run</option>{plannedRuns.map((plannedRun) => <option key={plannedRun.id} value={plannedRun.id}>{intentLabels[plannedRun.training_intent]} on {plannedRun.scheduled_date}</option>)}</select></label>
-          <div className="link-fields">
-             <label><span>Linked duration</span><span className="unit-input"><input name="linked_duration_minutes" type="number" min="0.0167" step="any" required defaultValue={linking.remaining_duration_seconds / 60} aria-invalid={Boolean(errors.directLink)} aria-describedby={errors.directLink ? "direct-link-error" : undefined} /><b>min</b></span></label>
-             <label><span>Linked distance <i>Optional</i></span><span className="unit-input"><input name="linked_distance_kilometres" type="number" min="0.001" step="any" defaultValue={linking.remaining_distance_metres === null ? "" : linking.remaining_distance_metres / 1000} aria-invalid={Boolean(errors.directLink)} aria-describedby={errors.directLink ? "direct-link-error" : undefined} /><b>km</b></span></label>
-          </div>
           {errors.directLink && <small className="error" id="direct-link-error">{errors.directLink}</small>}
-          <button type="submit">Create Link</button>
-        </form>
+          <button type="submit">Link complete activity</button>
+        </form> : null}
       </section>
     )}
-    {suggestions.length > 0 ? (
-      <section className="linking-panel" aria-label="Suggested Planned Run matches">
-        <div className="section-heading"><div><span className="pending-badge">Pending suggestion</span><h2>Match this activity to a plan</h2></div><code>{suggestions[0].algorithm_version}</code></div>
-        {suggestions.map((suggestion) => {
-          const plannedRun = suggestion.planned_run;
+    {linking && linking.candidates.length > 1 && (
+      <section className="linking-panel" aria-label="Eligible Planned Run candidates">
+        <div className="section-heading"><div><span className="pending-badge">Athlete selection required</span><h2>Choose one Planned Run</h2></div><code>{linking.candidates[0].algorithm_version}</code></div>
+        {linking.candidates.map((candidate) => {
+          const plannedRun = candidate.planned_run;
           const linkError = errors[`link-${plannedRun.id}`];
           const errorId = `link-error-${plannedRun.id}`;
-          const suggestionLabel = `${intentLabels[plannedRun.training_intent]} on ${plannedRun.scheduled_date}`;
+          const candidateLabel = `${intentLabels[plannedRun.training_intent]} on ${plannedRun.scheduled_date}`;
           return (
-            <form className="suggestion-card" aria-label={`Suggestion for ${suggestionLabel}`} key={plannedRun.id} onSubmit={(event) => onConfirm(event, plannedRun.id)}>
-              <div><strong>{suggestionLabel}</strong><small>{formatDuration(plannedRun.active_revision.duration_seconds)} planned{plannedRun.active_revision.distance_metres === null ? "" : ` / ${plannedRun.active_revision.distance_metres / 1000} km`}</small></div>
-              <ul>{suggestion.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
-              <div className="link-fields">
-                 <label><span>Linked duration</span><span className="unit-input"><input name="linked_duration_minutes" type="number" min="0.0167" step="any" required defaultValue={suggestion.proposed_duration_seconds / 60} aria-invalid={Boolean(linkError)} aria-describedby={linkError ? errorId : undefined} /><b>min</b></span></label>
-                 <label><span>Linked distance <i>Optional</i></span><span className="unit-input"><input name="linked_distance_kilometres" type="number" min="0.001" step="any" defaultValue={suggestion.proposed_distance_metres === null ? "" : suggestion.proposed_distance_metres / 1000} aria-invalid={Boolean(linkError)} aria-describedby={linkError ? errorId : undefined} /><b>km</b></span></label>
-              </div>
+            <article className="suggestion-card" aria-label={`Candidate ${candidateLabel}`} key={plannedRun.id}>
+              <div><strong>{candidateLabel}</strong><small>{formatDuration(plannedRun.active_revision.duration_seconds)} planned{plannedRun.active_revision.distance_metres === null ? "" : ` / ${plannedRun.active_revision.distance_metres / 1000} km`}</small></div>
+              <ul>{candidate.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
               {linkError && <small className="error" id={errorId}>{linkError}</small>}
-              <div className="suggestion-actions"><button type="button" className="secondary-button" onClick={() => onReject(plannedRun.id)}>Reject suggestion</button><button type="submit">Confirm Link</button></div>
-            </form>
+              <button type="button" aria-describedby={linkError ? errorId : undefined} onClick={() => onConfirm(plannedRun.id)}>Confirm whole-activity Link</button>
+            </article>
           );
         })}
       </section>
-    ) : activity.link_status === "unmatched" ? <p className="empty-state">No compatible Planned Run suggestions.</p> : <p className="outcome-state">This activity has a confirmed Link. Open its Planned Run to review planned-versus-actual evidence.</p>}
+    )}
+    {linking?.legacy_resolution?.status === "unresolved" && <section className="linking-panel" aria-label="Unresolved legacy Links">
+      <div className="section-heading"><div><span className="pending-badge">Legacy resolution required</span><h2>Preserved prior relationships</h2></div></div>
+      <p>This activity previously had multiple allocated Links. Tempo preserved every relationship and amount without choosing a winner.</p>
+      {linking.legacy_resolution.records.map((record) => <article className="suggestion-card" key={record.id}><strong>{intentLabels[record.planned_run.training_intent]} on {record.planned_run.scheduled_date}</strong><small>Preserved: {formatDuration(record.linked_duration_seconds)}{record.linked_distance_metres === null ? "" : ` / ${record.linked_distance_metres / 1000} km`}</small><button type="button" onClick={() => onResolveLegacy(record.planned_session_id)}>Use this Planned Run</button></article>)}
+      <button type="button" className="secondary-button" onClick={() => onResolveLegacy(null)}>Resolve with no current Link</button>
+    </section>}
+    {linking && !linking.link && linking.candidates.length === 0 && !linking.legacy_resolution ? <p className="empty-state">No eligible Planned Runs. This activity remains legitimate unmatched evidence.</p> : linking?.link ? <p className="outcome-state">The complete activity has one Link. Session Outcome remains not recorded.</p> : null}
     </>
   );
 }
@@ -675,10 +630,9 @@ function RunDetail({
           <article className="evidence-card" key={item.link.id}>
             <h3>{item.activity.title || "Running activity"}</h3>
             <dl>
-               <div><dt>Linked duration</dt><dd>{formatDuration(item.link.linked_duration_seconds)}</dd></div>
-               <div><dt>Linked distance</dt><dd>{item.link.linked_distance_metres === null ? "Not linked" : `${item.link.linked_distance_metres / 1000} km`}</dd></div>
-              <div><dt>Unmatched duration</dt><dd>{formatDuration(item.unmatched_duration_seconds)}</dd></div>
-              <div><dt>Unmatched distance</dt><dd>{item.unmatched_distance_metres === null ? "Not recorded" : `${item.unmatched_distance_metres / 1000} km`}</dd></div>
+               <div><dt>Actual duration</dt><dd>{formatDuration(item.activity.duration_seconds)}</dd></div>
+               <div><dt>Actual distance</dt><dd>{item.activity.distance_metres === null ? "Not recorded" : `${item.activity.distance_metres / 1000} km`}</dd></div>
+              <div><dt>Link source</dt><dd>{item.link.source.replace("_", " ")}</dd></div>
               <div><dt>Duration difference</dt><dd>{formatDifference(evidence.duration_difference_seconds, "seconds")}</dd></div>
               <div><dt>Distance difference</dt><dd>{formatDifference(evidence.distance_difference_metres, "metres")}</dd></div>
             </dl>
