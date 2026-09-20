@@ -91,6 +91,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/planned-runs/{planned_session_id}/outcomes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Session Outcome */
+        post: operations["record_session_outcome_api_planned_runs__planned_session_id__outcomes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/planned-runs/{planned_session_id}/check-ins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Check In */
+        post: operations["record_check_in_api_planned_runs__planned_session_id__check_ins_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/planned-runs/{planned_session_id}/linking": {
         parameters: {
             query?: never;
@@ -217,6 +251,37 @@ export interface components {
              * Format: binary
              */
             file: string;
+        };
+        /** CheckInCreate */
+        CheckInCreate: {
+            /** Readiness */
+            readiness?: number | null;
+            /** Post Session Effort */
+            post_session_effort?: number | null;
+            /** Feel */
+            feel?: number | null;
+            /** Notes */
+            notes?: string | null;
+        };
+        /** CheckInRead */
+        CheckInRead: {
+            /** Id */
+            id: string;
+            /** Planned Session Id */
+            planned_session_id: string;
+            /** Readiness */
+            readiness: number | null;
+            /** Post Session Effort */
+            post_session_effort: number | null;
+            /** Feel */
+            feel: number | null;
+            /** Notes */
+            notes: string | null;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
         };
         /** CompletedActivityRead */
         CompletedActivityRead: {
@@ -346,8 +411,12 @@ export interface components {
             duration_difference_seconds: number | null;
             /** Distance Difference Metres */
             distance_difference_metres: number | null;
-            /** Session Outcome */
-            session_outcome?: null;
+            session_outcome: components["schemas"]["SessionOutcomeRead"] | null;
+            /** Session Outcome History */
+            session_outcome_history: components["schemas"]["SessionOutcomeRead"][];
+            check_in: components["schemas"]["CheckInRead"] | null;
+            /** Check In History */
+            check_in_history: components["schemas"]["CheckInRead"][];
         };
         /** LinkRead */
         LinkRead: {
@@ -465,6 +534,29 @@ export interface components {
          * @enum {string}
          */
         Priority: "low" | "normal" | "high";
+        /** SessionOutcomeCreate */
+        SessionOutcomeCreate: {
+            /** Disposition */
+            disposition: string;
+            /** Reason */
+            reason?: string | null;
+        };
+        /** SessionOutcomeRead */
+        SessionOutcomeRead: {
+            /** Id */
+            id: string;
+            /** Planned Session Id */
+            planned_session_id: string;
+            /** Disposition */
+            disposition: string;
+            /** Reason */
+            reason: string | null;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+        };
         /**
          * TrainingIntent
          * @enum {string}
@@ -676,6 +768,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CompletedActivityRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_session_outcome_api_planned_runs__planned_session_id__outcomes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                planned_session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionOutcomeCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOutcomeRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_check_in_api_planned_runs__planned_session_id__check_ins_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                planned_session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckInCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckInRead"];
                 };
             };
             /** @description Validation Error */

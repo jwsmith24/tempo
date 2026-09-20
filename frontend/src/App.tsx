@@ -9,6 +9,7 @@ type ActivityLinking = components["schemas"]["ActivityLinkingRead"];
 type LinkEvidence = components["schemas"]["LinkEvidenceRead"];
 type ValidationError = components["schemas"]["HTTPValidationError"];
 type ActivityLinkStatus = components["schemas"]["ActivityLinkStatus"];
+type SessionOutcomeCreate = components["schemas"]["SessionOutcomeCreate"];
 
 const intentLabels: Record<PlannedRunCreate["training_intent"], string> = {
   recovery: "Recovery",
@@ -22,6 +23,14 @@ const linkStatusLabels: Record<ActivityLinkStatus, string> = {
   unmatched: "Unmatched",
   linked: "Linked",
   legacy_unresolved: "Legacy Links need resolution",
+};
+const outcomeLabels: Record<SessionOutcomeCreate["disposition"], string> = {
+  completed: "Completed",
+  modified: "Modified",
+  rescheduled: "Rescheduled",
+  intentionally_skipped: "Intentionally skipped",
+  unintentionally_missed: "Unintentionally missed",
+  replaced: "Replaced",
 };
 
 const surfacePanel = "border border-line bg-surface p-[clamp(24px,5vw,48px)] shadow-[7px_7px_0_var(--color-ink)] max-[700px]:shadow-[4px_4px_0_var(--color-ink)]";
@@ -164,6 +173,7 @@ export function App() {
     const created = (await response.json()) as PlannedRun;
     window.history.pushState({}, "", `/planned-runs/${created.id}`);
     setRun(created);
+    await refreshEvidence(created.id);
     setStatus("Saved. This Planned Run is in your local record.");
   }
 
@@ -338,6 +348,61 @@ export function App() {
     setStatus(plannedSessionId ? "Legacy Links resolved to the selected Planned Run. Preserved relationships remain in history." : "Legacy Links resolved with no current Link. Preserved relationships remain in history.");
   }
 
+  async function refreshEvidence(plannedSessionId: string): Promise<boolean> {
+    const response = await fetch(`/api/planned-runs/${plannedSessionId}/linking`);
+    if (!response.ok) {
+      setStatus("Session details could not be loaded.");
+      return false;
+    }
+    setEvidence((await response.json()) as LinkEvidence);
+    return true;
+  }
+
+  async function recordOutcome(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!run) return;
+    setErrors({});
+    const form = new FormData(event.currentTarget);
+    const response = await fetch(`/api/planned-runs/${run.id}/outcomes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ disposition: form.get("disposition"), reason: String(form.get("reason")) || null }),
+    });
+    if (!response.ok) {
+      setErrors({ outcome: "Session Outcome was not recorded. Review the selected disposition." });
+      setStatus("Session Outcome was not recorded.");
+      return;
+    }
+    if (await refreshEvidence(run.id)) setStatus("Session Outcome recorded. Links remain separate evidence.");
+  }
+
+  async function recordCheckIn(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!run) return;
+    setErrors({});
+    const form = new FormData(event.currentTarget);
+    const optionalNumber = (name: string) => {
+      const value = String(form.get(name));
+      return value === "" ? null : Number(value);
+    };
+    const response = await fetch(`/api/planned-runs/${run.id}/check-ins`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        readiness: optionalNumber("readiness"),
+        post_session_effort: optionalNumber("post_session_effort"),
+        feel: optionalNumber("feel"),
+        notes: String(form.get("notes")) || null,
+      }),
+    });
+    if (!response.ok) {
+      setErrors({ checkIn: "Record at least one valid athlete-reported observation." });
+      setStatus("Check-in was not recorded. Review the highlighted fields.");
+      return;
+    }
+    if (await refreshEvidence(run.id)) setStatus("Check-in recorded as an athlete-reported observation.");
+  }
+
   const showingActivity = currentRoute !== "run" || activity !== null;
 
   return (
@@ -374,7 +439,7 @@ export function App() {
         </p>
       </section>
       <p className="mb-[18px] min-h-6 font-mono text-[13px] font-medium" role="status" aria-live="polite">{loading ? "Loading local record..." : status}</p>
-      {activity ? <ActivityDetail activity={activity} linking={activityLinking} plannedRuns={plannedRuns} errors={errors} onConfirm={confirmCandidate} onCreateDirect={createDirectLink} onChange={changeDirectLink} onRemove={removeDirectLink} onResolveLegacy={resolveLegacy} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : currentRoute === "activity-import" ? <ImportForm onSubmit={importActivity} errors={errors} /> : run ? <RunDetail run={run} evidence={evidence} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
+      {activity ? <ActivityDetail activity={activity} linking={activityLinking} plannedRuns={plannedRuns} errors={errors} onConfirm={confirmCandidate} onCreateDirect={createDirectLink} onChange={changeDirectLink} onRemove={removeDirectLink} onResolveLegacy={resolveLegacy} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : currentRoute === "activity-import" ? <ImportForm onSubmit={importActivity} errors={errors} /> : run ? <RunDetail run={run} evidence={evidence} errors={errors} onRecordOutcome={recordOutcome} onRecordCheckIn={recordCheckIn} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
     </main>
   );
 }
@@ -624,9 +689,15 @@ function RunForm({
 function RunDetail({
   run,
   evidence,
+  errors,
+  onRecordOutcome,
+  onRecordCheckIn,
 }: {
   run: PlannedRun;
   evidence: LinkEvidence | null;
+  errors: Record<string, string>;
+  onRecordOutcome: (event: FormEvent<HTMLFormElement>) => void;
+  onRecordCheckIn: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const revision = run.active_revision;
   return (
@@ -645,7 +716,7 @@ function RunDetail({
       {run.notes && <div className={notesBlock}><span className={labelText}>Notes</span><p>{run.notes}</p></div>}
       <footer><span>Created by athlete entry</span><code>{run.id}</code></footer>
     </article>
-    {evidence && evidence.links.length === 0 && <p className="py-[18px] font-mono text-[13px] font-medium">Session Outcome: not recorded</p>}
+    {evidence && <SessionObservations evidence={evidence} errors={errors} onRecordOutcome={onRecordOutcome} onRecordCheckIn={onRecordCheckIn} />}
     {evidence && evidence.links.length > 0 && (
       <section className={`${linkingPanel} border-positive`} aria-label="Confirmed Links">
         <div className={sectionHeading}><div><span className={revisionBadge}>Confirmed Links</span><h2>Planned versus actual</h2></div></div>
@@ -666,9 +737,39 @@ function RunDetail({
             <div className={notesBlock}><span className={labelText}>Source provenance</span><p>{item.activity.import_provenance ? `${item.activity.import_provenance.adapter_type} / ${item.activity.import_provenance.importer_name} ${item.activity.import_provenance.importer_version} / imported ${item.activity.import_provenance.imported_at} / raw source ${item.activity.import_provenance.raw_file_identity}` : "Manual athlete entry; no imported raw source."}</p></div>
           </article>
         ))}
-        <p className="py-[18px] font-mono text-[13px] font-medium">Session Outcome: not recorded</p>
       </section>
     )}
     </>
+  );
+}
+
+function SessionObservations({ evidence, errors, onRecordOutcome, onRecordCheckIn }: { evidence: LinkEvidence; errors: Record<string, string>; onRecordOutcome: (event: FormEvent<HTMLFormElement>) => void; onRecordCheckIn: (event: FormEvent<HTMLFormElement>) => void }) {
+  return (
+    <section className={linkingPanel} aria-label="Session Outcome and Check-in">
+      <div className={sectionHeading}><div><span className={revisionBadge}>Athlete record</span><h2>Outcome and observations</h2></div></div>
+      <p>Session Outcome is your confirmed disposition. Check-ins are athlete-reported observations, not readiness truth, diagnosis, Findings, or guidance.</p>
+      <form className={suggestionCard} aria-label="Record Session Outcome" onSubmit={onRecordOutcome}>
+        <label><span>Session Outcome</span><select name="disposition" defaultValue="completed" aria-invalid={Boolean(errors.outcome)} aria-describedby={errors.outcome ? "outcome-error" : undefined}>{Object.entries(outcomeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label><span>Reason <i className="float-right not-italic text-muted normal-case">Optional</i></span><textarea name="reason" rows={2} maxLength={2000} /></label>
+        {errors.outcome && <small className={errorText} id="outcome-error">{errors.outcome}</small>}
+        <button type="submit">Record Session Outcome</button>
+      </form>
+      <form className={suggestionCard} aria-label="Record Check-in" onSubmit={onRecordCheckIn}>
+        <div className={fieldGrid}>
+          <label><span>Readiness <i className="float-right not-italic text-muted normal-case">1-5</i></span><input name="readiness" type="number" min="1" max="5" aria-invalid={Boolean(errors.checkIn)} aria-describedby={errors.checkIn ? "check-in-error" : undefined} /></label>
+          <label><span>Post-session effort <i className="float-right not-italic text-muted normal-case">1-10</i></span><input name="post_session_effort" type="number" min="1" max="10" aria-invalid={Boolean(errors.checkIn)} aria-describedby={errors.checkIn ? "check-in-error" : undefined} /></label>
+          <label><span>Feel <i className="float-right not-italic text-muted normal-case">1-5</i></span><input name="feel" type="number" min="1" max="5" aria-invalid={Boolean(errors.checkIn)} aria-describedby={errors.checkIn ? "check-in-error" : undefined} /></label>
+        </div>
+        <label><span>Notes <i className="float-right not-italic text-muted normal-case">Optional</i></span><textarea name="notes" rows={2} maxLength={2000} /></label>
+        {errors.checkIn && <small className={errorText} id="check-in-error">{errors.checkIn}</small>}
+        <button type="submit">Record Check-in</button>
+      </form>
+      <dl className="border border-line bg-surface p-[clamp(22px,4vw,34px)]">
+        <div><dt>Current Session Outcome</dt><dd>{evidence.session_outcome ? outcomeLabels[evidence.session_outcome.disposition] : "Not recorded"}</dd></div>
+        <div><dt>Current Check-in</dt><dd>{evidence.check_in ? "Recorded" : "Not recorded"}</dd></div>
+      </dl>
+      {evidence.session_outcome_history.length > 0 && <p className="font-mono text-xs">Session Outcome history: {evidence.session_outcome_history.map((outcome) => outcomeLabels[outcome.disposition]).join("; ")}</p>}
+      {evidence.check_in_history.length > 0 && <p className="font-mono text-xs">Check-in history: {evidence.check_in_history.length} record{evidence.check_in_history.length === 1 ? "" : "s"}.</p>}
+    </section>
   );
 }

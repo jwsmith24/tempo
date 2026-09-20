@@ -8,10 +8,12 @@ from sqlalchemy.orm import Session
 from tempo.activities.models import CompletedActivity
 from tempo.activities.router import activity_link_status, activity_response
 from tempo.database import get_session
-from tempo.linking.models import LegacyLinkRecord, LegacyLinkResolution, Link
+from tempo.linking.models import CheckIn, LegacyLinkRecord, LegacyLinkResolution, Link, SessionOutcome
 from tempo.linking.schemas import (
     ActivityLinkRead,
     ActivityLinkingRead,
+    CheckInCreate,
+    CheckInRead,
     DirectLinkCreate,
     LegacyLinkRecordRead,
     LegacyResolutionRead,
@@ -22,6 +24,8 @@ from tempo.linking.schemas import (
     LinkRead,
     LinkRemove,
     MatchCandidateRead,
+    SessionOutcomeCreate,
+    SessionOutcomeRead,
 )
 from tempo.linking.service import (
     ALGORITHM_VERSION,
@@ -94,6 +98,54 @@ def legacy_read(session: Session, resolution: LegacyLinkResolution) -> LegacyRes
         resolved_at=resolution.resolved_at,
         records=records,
     )
+
+
+def outcome_read(outcome: SessionOutcome) -> SessionOutcomeRead:
+    return SessionOutcomeRead.model_validate(outcome)
+
+
+def check_in_read(check_in: CheckIn) -> CheckInRead:
+    return CheckInRead.model_validate(check_in)
+
+
+@router.post("/{planned_session_id}/outcomes", response_model=SessionOutcomeRead, status_code=status.HTTP_201_CREATED)
+def record_session_outcome(
+    planned_session_id: str,
+    request: SessionOutcomeCreate,
+    session: Session = Depends(get_session),
+) -> SessionOutcomeRead:
+    require_plan(session, planned_session_id)
+    outcome = SessionOutcome(
+        planned_session_id=planned_session_id,
+        disposition=request.disposition,
+        reason=request.reason,
+        recorded_at=datetime.now(UTC),
+    )
+    session.add(outcome)
+    session.commit()
+    session.refresh(outcome)
+    return outcome_read(outcome)
+
+
+@router.post("/{planned_session_id}/check-ins", response_model=CheckInRead, status_code=status.HTTP_201_CREATED)
+def record_check_in(
+    planned_session_id: str,
+    request: CheckInCreate,
+    session: Session = Depends(get_session),
+) -> CheckInRead:
+    require_plan(session, planned_session_id)
+    check_in = CheckIn(
+        planned_session_id=planned_session_id,
+        readiness=request.readiness,
+        post_session_effort=request.post_session_effort,
+        feel=request.feel,
+        notes=request.notes,
+        recorded_at=datetime.now(UTC),
+    )
+    session.add(check_in)
+    session.commit()
+    session.refresh(check_in)
+    return check_in_read(check_in)
 
 
 @activity_router.get("/{activity_id}/linking", response_model=ActivityLinkingRead)
@@ -286,6 +338,20 @@ def get_link_evidence(
         else None
     )
     revision = planned_session.active_revision
+    outcomes = list(
+        session.scalars(
+            select(SessionOutcome)
+            .where(SessionOutcome.planned_session_id == planned_session_id)
+            .order_by(SessionOutcome.recorded_at, SessionOutcome.id)
+        )
+    )
+    check_ins = list(
+        session.scalars(
+            select(CheckIn)
+            .where(CheckIn.planned_session_id == planned_session_id)
+            .order_by(CheckIn.recorded_at, CheckIn.id)
+        )
+    )
     return LinkEvidenceRead(
         planned_run=planned_session,
         links=evidence,
@@ -301,4 +367,8 @@ def get_link_evidence(
             if revision and revision.distance_metres is not None and total_distance is not None
             else None
         ),
+        session_outcome=outcome_read(outcomes[-1]) if outcomes else None,
+        session_outcome_history=[outcome_read(outcome) for outcome in outcomes],
+        check_in=check_in_read(check_ins[-1]) if check_ins else None,
+        check_in_history=[check_in_read(check_in) for check_in in check_ins],
     )

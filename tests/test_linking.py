@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
-from tempo.linking.models import LegacyLinkRecord, LegacyLinkResolution, Link
+from tempo.linking.models import CheckIn, LegacyLinkRecord, LegacyLinkResolution, Link, SessionOutcome
 from tempo.main import app
 
 
@@ -236,3 +236,49 @@ def test_legacy_multi_links_are_visible_and_resolved_without_losing_history(
     assert result["link"]["planned_run"]["id"] == second["id"]
     assert result["legacy_resolution"]["status"] == "resolved"
     assert len(result["legacy_resolution"]["records"]) == 2
+
+
+def test_outcomes_and_check_ins_are_append_only_and_independent_of_links(
+    client: TestClient, database_url: str
+) -> None:
+    run = create_run(client, "2026-09-01")
+    base = f"/api/planned-runs/{run['id']}"
+
+    dispositions = [
+        "completed",
+        "modified",
+        "rescheduled",
+        "intentionally_skipped",
+        "unintentionally_missed",
+        "replaced",
+    ]
+    outcomes = [
+        client.post(f"{base}/outcomes", json={"disposition": disposition, "reason": "Finished as planned."})
+        for disposition in dispositions
+    ]
+    assert all(response.status_code == 201 for response in outcomes)
+    assert outcomes[0].json()["reason"] == "Finished as planned."
+    assert client.post(f"{base}/outcomes", json={"disposition": "unknown"}).status_code == 422
+    assert client.post(f"{base}/check-ins", json={}).status_code == 422
+    assert client.post(f"{base}/check-ins", json={"notes": "   "}).status_code == 422
+    assert client.post(f"{base}/check-ins", json={"readiness": 6}).status_code == 422
+    first_check_in = client.post(f"{base}/check-ins", json={"readiness": 3, "notes": "Tired."})
+    second_check_in = client.post(f"{base}/check-ins", json={"post_session_effort": 7, "feel": 4})
+    notes_only_check_in = client.post(f"{base}/check-ins", json={"notes": "Easy day."})
+    assert first_check_in.status_code == 201
+    assert second_check_in.status_code == 201
+    assert notes_only_check_in.status_code == 201
+
+    evidence = client.get(f"{base}/linking").json()
+    assert evidence["links"] == []
+    assert evidence["session_outcome"]["id"] == outcomes[-1].json()["id"]
+    assert [item["disposition"] for item in evidence["session_outcome_history"]] == dispositions
+    assert evidence["check_in"]["id"] == notes_only_check_in.json()["id"]
+    assert [item["id"] for item in evidence["check_in_history"]] == [
+        first_check_in.json()["id"],
+        second_check_in.json()["id"],
+        notes_only_check_in.json()["id"],
+    ]
+    with Session(create_engine(database_url)) as restarted_session:
+        assert restarted_session.scalar(select(func.count()).select_from(SessionOutcome)) == len(dispositions)
+        assert restarted_session.scalar(select(func.count()).select_from(CheckIn)) == 3

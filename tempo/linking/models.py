@@ -130,3 +130,50 @@ class SuggestionRejection(Base):
     activity_effective_version: Mapped[str] = mapped_column(String(64))
     algorithm_version: Mapped[str] = mapped_column(String(64))
     rejected_at: Mapped[datetime] = mapped_column(UTCInstant())
+
+
+class SessionOutcome(Base):
+    __tablename__ = "session_outcomes"
+    __table_args__ = (
+        CheckConstraint(
+            "disposition IN ('completed', 'modified', 'rescheduled', "
+            "'intentionally_skipped', 'unintentionally_missed', 'replaced')",
+            name="ck_session_outcome_disposition",
+        ),
+        Index("ix_session_outcome_planned_session", "planned_session_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    planned_session_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("planned_sessions.id", ondelete="CASCADE")
+    )
+    disposition: Mapped[str] = mapped_column(String(32))
+    reason: Mapped[str | None] = mapped_column(Text)
+    recorded_at: Mapped[datetime] = mapped_column(UTCInstant())
+
+
+class CheckIn(Base):
+    __tablename__ = "check_ins"
+    __table_args__ = (
+        CheckConstraint("readiness IS NULL OR readiness BETWEEN 1 AND 5", name="ck_check_in_readiness"),
+        CheckConstraint(
+            "post_session_effort IS NULL OR post_session_effort BETWEEN 1 AND 10",
+            name="ck_check_in_post_session_effort",
+        ),
+        CheckConstraint("feel IS NULL OR feel BETWEEN 1 AND 5", name="ck_check_in_feel"),
+        CheckConstraint(
+            "readiness IS NOT NULL OR post_session_effort IS NOT NULL OR feel IS NOT NULL OR notes IS NOT NULL",
+            name="ck_check_in_has_observation",
+        ),
+        Index("ix_check_in_planned_session", "planned_session_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    planned_session_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("planned_sessions.id", ondelete="CASCADE")
+    )
+    readiness: Mapped[int | None] = mapped_column(Integer)
+    post_session_effort: Mapped[int | None] = mapped_column(Integer)
+    feel: Mapped[int | None] = mapped_column(Integer)
+    notes: Mapped[str | None] = mapped_column(Text)
+    recorded_at: Mapped[datetime] = mapped_column(UTCInstant())

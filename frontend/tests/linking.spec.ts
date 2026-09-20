@@ -112,3 +112,24 @@ with sqlite3.connect(db) as connection:
   await page.reload();
   await expect(page.getByText("Linked", { exact: true })).toBeVisible();
 });
+
+test("records append-only Session Outcome and Check-in without a Link", async ({ page }) => {
+  const runUrl = await createRun(page, "2026-12-01");
+
+  const outcome = page.getByRole("form", { name: "Record Session Outcome" });
+  await outcome.getByLabel("Session Outcome").selectOption("rescheduled");
+  await outcome.getByRole("button", { name: "Record Session Outcome" }).press("Enter");
+  await expect(page.getByRole("status")).toContainText("Session Outcome recorded");
+  await expect(page.getByRole("definition").filter({ hasText: "Rescheduled" })).toBeVisible();
+
+  const checkIn = page.getByRole("form", { name: "Record Check-in" });
+  await checkIn.getByLabel("Readiness").fill("3");
+  await checkIn.getByRole("button", { name: "Record Check-in" }).press("Enter");
+  await expect(page.getByRole("status")).toContainText("Check-in recorded");
+  await expect(page.getByText("Check-in history: 1 record.")).toBeVisible();
+
+  await page.reload();
+  await expect(page).toHaveURL(runUrl);
+  await expect(page.getByRole("definition").filter({ hasText: "Rescheduled" })).toBeVisible();
+  await expect(page.getByText("Check-in history: 1 record.")).toBeVisible();
+});
