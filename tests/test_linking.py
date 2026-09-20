@@ -1,12 +1,22 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from threading import Barrier
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
-from tempo.linking.models import CheckIn, LegacyLinkRecord, LegacyLinkResolution, Link, SessionOutcome
+from tempo.activities.models import CompletedActivity
+from tempo.linking.models import (
+    CheckIn,
+    LegacyLinkRecord,
+    LegacyLinkResolution,
+    Link,
+    LinkDecision,
+    SessionOutcome,
+)
 from tempo.main import app
+from tempo.planning.models import PlannedSession
 
 
 def create_run(client: TestClient, scheduled_date: str = "2026-09-20") -> dict:
@@ -52,7 +62,13 @@ def test_exactly_one_candidate_links_automatically_with_complete_evidence(
 
     assert activity["link_status"] == "linked"
     linking = client.get(f"/api/activities/{activity['id']}/linking").json()
-    assert linking["candidates"] == []
+    evaluation = linking["latest_match_evaluation"]
+    assert datetime.fromisoformat(evaluation["activity_effective_version"]) == datetime.fromisoformat(
+        activity["created_at"]
+    )
+    assert evaluation["algorithm_version"] == "stage1-date-noon-v2"
+    assert evaluation["evaluated_at"]
+    assert [candidate["planned_run"]["id"] for candidate in evaluation["candidates"]] == [run["id"]]
     assert linking["link"]["planned_run"]["id"] == run["id"]
     link = linking["link"]["link"]
     assert link["source"] == "automatic"
@@ -85,7 +101,7 @@ def test_multiple_candidates_require_confirmation_and_zero_candidates_stay_unmat
     assert activity["link_status"] == "unmatched"
     linking = client.get(f"/api/activities/{activity['id']}/linking").json()
     assert linking["link"] is None
-    assert [candidate["planned_run"]["id"] for candidate in linking["candidates"]] == sorted(
+    assert [candidate["planned_run"]["id"] for candidate in linking["latest_match_evaluation"]["candidates"]] == sorted(
         [first["id"], second["id"]]
     )
 
@@ -101,7 +117,7 @@ def test_multiple_candidates_require_confirmation_and_zero_candidates_stay_unmat
     unmatched = create_activity(client, start="2026-10-20T08:00:00+00:00")
     detail = client.get(f"/api/activities/{unmatched['id']}/linking").json()
     assert detail["link"] is None
-    assert detail["candidates"] == []
+    assert detail["latest_match_evaluation"]["candidates"] == []
 
 
 def test_direct_link_can_be_changed_removed_and_revisited(client: TestClient) -> None:
@@ -117,7 +133,7 @@ def test_direct_link_can_be_changed_removed_and_revisited(client: TestClient) ->
     assert changed.status_code == 200
     assert changed.json()["planned_session_id"] == second["id"]
 
-    with TestClient(app) as restarted_client:
+    with TestClient(app, base_url="http://127.0.0.1") as restarted_client:
         detail = restarted_client.get(f"/api/activities/{activity['id']}/linking").json()
         assert detail["link"]["planned_run"]["id"] == second["id"]
 
@@ -180,11 +196,107 @@ def test_stale_link_change_and_removal_are_rejected(client: TestClient) -> None:
     assert stale_remove.status_code == 409
 
 
+def test_concurrent_reassignments_leave_one_destination_and_coherent_history(
+    client: TestClient, database_url: str
+) -> None:
+    original = create_run(client, "2026-09-01")
+    destinations = [
+        create_run(client, "2026-10-01"),
+        create_run(client, "2026-11-01"),
+    ]
+    activity = create_activity(client, start="2026-09-20T08:00:00+00:00")
+    url = f"/api/activities/{activity['id']}/linking/link"
+    assert client.post(url, json={"planned_session_id": original["id"]}).status_code == 201
+    start = Barrier(2)
+
+    def reassign(run_id: str):
+        start.wait(timeout=5)
+        return client.put(
+            url,
+            json={"planned_session_id": run_id, "expected_version": 1},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(reassign, [run["id"] for run in destinations]))
+
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    conflict = next(response for response in responses if response.status_code == 409)
+    assert conflict.json()["detail"] == "This Link changed since it was loaded. Reload and try again."
+    winner = next(response.json() for response in responses if response.status_code == 200)
+    with Session(create_engine(database_url)) as session:
+        links = list(session.scalars(select(Link)))
+        decisions = list(session.scalars(select(LinkDecision)))
+        assert len(links) == 1
+        assert links[0].completed_activity_id == activity["id"]
+        assert links[0].planned_session_id == winner["planned_session_id"]
+        assert links[0].version == 2
+        assert len(decisions) == 1
+        assert decisions[0].action == "changed"
+        assert decisions[0].prior_planned_session_id == original["id"]
+        assert decisions[0].planned_session_id == winner["planned_session_id"]
+
+
+def test_concurrent_change_versus_remove_preserves_records_and_zero_or_one_link(
+    client: TestClient, database_url: str
+) -> None:
+    original = create_run(client, "2026-09-01")
+    destination = create_run(client, "2026-10-01")
+    activity = create_activity(client, start="2026-09-20T08:00:00+00:00")
+    url = f"/api/activities/{activity['id']}/linking/link"
+    assert client.post(url, json={"planned_session_id": original["id"]}).status_code == 201
+    assert client.post(
+        f"/api/planned-runs/{original['id']}/outcomes",
+        json={"disposition": "completed", "reason": "Preserve this decision."},
+    ).status_code == 201
+    assert client.post(
+        f"/api/planned-runs/{original['id']}/check-ins",
+        json={"post_session_effort": 7},
+    ).status_code == 201
+    start = Barrier(2)
+
+    def change():
+        start.wait(timeout=5)
+        return client.put(
+            url,
+            json={"planned_session_id": destination["id"], "expected_version": 1},
+        )
+
+    def remove():
+        start.wait(timeout=5)
+        return client.request("DELETE", url, json={"expected_version": 1})
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        change_response = executor.submit(change)
+        remove_response = executor.submit(remove)
+        responses = [change_response.result(), remove_response.result()]
+
+    assert sum(response.status_code in {200, 204} for response in responses) == 1
+    loser = next(response for response in responses if response.status_code not in {200, 204})
+    assert loser.status_code == 409
+    assert "Reload and try again" in loser.json()["detail"]
+    with Session(create_engine(database_url)) as session:
+        links = list(session.scalars(select(Link)))
+        decisions = list(session.scalars(select(LinkDecision)))
+        assert len(links) <= 1
+        if links:
+            assert links[0].completed_activity_id == activity["id"]
+            assert links[0].planned_session_id == destination["id"]
+        assert len(decisions) == 1
+        assert decisions[0].action in {"changed", "removed"}
+        assert session.get(CompletedActivity, activity["id"]) is not None
+        assert session.get(PlannedSession, original["id"]) is not None
+        assert session.get(PlannedSession, destination["id"]) is not None
+        assert session.scalar(select(func.count()).select_from(SessionOutcome)) == 1
+        assert session.scalar(select(func.count()).select_from(CheckIn)) == 1
+
+
 def test_non_running_activity_is_not_matched(client: TestClient) -> None:
     create_run(client)
     activity = create_activity(client, modality="cycling")
     assert activity["link_status"] == "unmatched"
-    assert client.get(f"/api/activities/{activity['id']}/linking").json()["candidates"] == []
+    assert client.get(f"/api/activities/{activity['id']}/linking").json()["latest_match_evaluation"][
+        "candidates"
+    ] == []
 
 
 def test_legacy_multi_links_are_visible_and_resolved_without_losing_history(

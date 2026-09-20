@@ -1,9 +1,8 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;600;700&display=swap");
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Manrope", sans-serif;
-  --font-mono: "DM Mono", monospace;
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --color-canvas: #f2f0e9;
   --color-surface: #fffef9;
   --color-ink: #17211b;

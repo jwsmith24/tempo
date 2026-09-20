@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from tempo.activities.router import router as activities_router
 from tempo.export_router import router as export_router
@@ -11,6 +12,10 @@ from tempo.linking.router import activity_router as activity_linking_router
 from tempo.linking.router import router as linking_router
 
 app = FastAPI(title="Tempo API", version="0.1.0")
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["127.0.0.1", "localhost"],
+)
 app.include_router(planning_router)
 app.include_router(activities_router)
 app.include_router(linking_router)

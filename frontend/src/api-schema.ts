@@ -269,8 +269,7 @@ export interface components {
         ActivityLinkingRead: {
             activity: components["schemas"]["CompletedActivityRead"];
             link: components["schemas"]["ActivityLinkRead"] | null;
-            /** Candidates */
-            candidates: components["schemas"]["MatchCandidateRead"][];
+            latest_match_evaluation: components["schemas"]["MatchEvaluationRead"] | null;
             legacy_resolution: components["schemas"]["LegacyResolutionRead"] | null;
         };
         /**
@@ -534,10 +533,22 @@ export interface components {
         /** MatchCandidateRead */
         MatchCandidateRead: {
             planned_run: components["schemas"]["PlannedRunRead"];
-            /** Algorithm Version */
-            algorithm_version: string;
             /** Reasons */
             reasons: string[];
+        };
+        /** MatchEvaluationRead */
+        MatchEvaluationRead: {
+            /** Activity Effective Version */
+            activity_effective_version: string;
+            /** Algorithm Version */
+            algorithm_version: string;
+            /**
+             * Evaluated At
+             * Format: date-time
+             */
+            evaluated_at: string;
+            /** Candidates */
+            candidates: components["schemas"]["MatchCandidateRead"][];
         };
         /** PlannedRunCreate */
         PlannedRunCreate: {

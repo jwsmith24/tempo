@@ -80,24 +80,295 @@ def manifest_checksum(manifest: dict[str, object]) -> str:
 
 
 def schema() -> dict[str, object]:
+    identifier = {"type": "string", "minLength": 1}
+    nullable_identifier = {"type": ["string", "null"], "minLength": 1}
+    instant = {"type": "string", "format": "date-time"}
+    nullable_instant = {"type": ["string", "null"], "format": "date-time"}
+    nullable_text = {"type": ["string", "null"]}
+    positive_integer = {"type": "integer", "minimum": 1}
+    nullable_positive_integer = {"type": ["integer", "null"], "minimum": 1}
+
+    def object_schema(
+        properties: dict[str, object], required: tuple[str, ...] | None = None
+    ) -> dict[str, object]:
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": properties,
+            "required": list(required or properties),
+        }
+
+    def record_file(definition: str) -> dict[str, object]:
+        return {"type": "array", "items": {"$ref": f"#/$defs/{definition}"}}
+
+    activity_values = object_schema(
+        {
+            "modality": {"enum": ["running", "cycling", "strength", "other"]},
+            "start_instant": instant,
+            "duration_seconds": positive_integer,
+            "distance_metres": nullable_positive_integer,
+            "title": nullable_text,
+            "notes": nullable_text,
+        }
+    )
+    candidate_result = object_schema(
+        {
+            "planned_session_id": identifier,
+            "reasons": {"type": "array", "items": {"type": "string"}},
+        }
+    )
+    definitions = {
+        "planned_session": object_schema(
+            {
+                "id": identifier,
+                "modality": {"const": "running"},
+                "scheduled_date": {"type": "string", "format": "date"},
+                "training_intent": {
+                    "enum": ["recovery", "aerobic_base", "threshold", "power", "assessment"]
+                },
+                "priority": {"enum": ["low", "normal", "high"]},
+                "notes": nullable_text,
+                "created_at": instant,
+                "active_revision_id": identifier,
+            }
+        ),
+        "prescription_revision": object_schema(
+            {
+                "id": identifier,
+                "planned_session_id": identifier,
+                "revision_number": positive_integer,
+                "duration_seconds": nullable_positive_integer,
+                "distance_metres": nullable_positive_integer,
+                "reason": {"type": "string"},
+                "provenance": {"type": "string"},
+                "created_at": instant,
+            }
+        ),
+        "completed_activity": object_schema(
+            {
+                "id": identifier,
+                "entry_source": {"enum": ["manual", "fit_import"]},
+                "creation_provenance": {"type": "string"},
+                "created_at": instant,
+                "original_values": activity_values,
+                "effective_values": activity_values,
+            }
+        ),
+        "import_provenance": object_schema(
+            {
+                "id": identifier,
+                "completed_activity_id": identifier,
+                "adapter_type": {"type": "string"},
+                "source_identity": {"type": "string"},
+                "importer_name": {"type": "string"},
+                "importer_version": {"type": "string"},
+                "imported_at": instant,
+                "raw_file_identity": {
+                    "type": "string",
+                    "pattern": "^sha256/[a-f0-9]{64}\\.fit$",
+                },
+                "checksum_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                "original_normalized_values": activity_values,
+                "export_path": {
+                    "type": "string",
+                    "pattern": "^raw/sha256/[a-f0-9]{64}\\.fit$",
+                },
+            }
+        ),
+        "correction": object_schema(
+            {
+                "id": identifier,
+                "completed_activity_id": identifier,
+                "field_name": {
+                    "enum": [
+                        "start_instant",
+                        "modality",
+                        "duration_seconds",
+                        "distance_metres",
+                        "title",
+                        "notes",
+                    ]
+                },
+                "reason": {"type": "string", "minLength": 1},
+                "recorded_at": instant,
+                "source_value": {"type": ["string", "integer", "null"]},
+                "replacement_value": {"type": ["string", "integer", "null"]},
+            }
+        ),
+        "link": object_schema(
+            {
+                "id": identifier,
+                "planned_session_id": identifier,
+                "completed_activity_id": identifier,
+                "source": {"enum": ["automatic", "athlete_confirmed", "direct"]},
+                "algorithm_version": nullable_text,
+                "version": positive_integer,
+                "created_at": instant,
+                "reasons": {"type": "array", "items": {"type": "string"}},
+            }
+        ),
+        "match_evaluation": object_schema(
+            {
+                "id": identifier,
+                "completed_activity_id": identifier,
+                "activity_effective_version": {"type": "string", "minLength": 1},
+                "algorithm_version": {"type": "string", "minLength": 1},
+                "evaluated_at": instant,
+                "candidate_results": {"type": "array", "items": candidate_result},
+            }
+        ),
+        "legacy_link_resolution": object_schema(
+            {
+                "id": identifier,
+                "completed_activity_id": identifier,
+                "status": {"enum": ["unresolved", "resolved"]},
+                "selected_planned_session_id": nullable_identifier,
+                "resolved_at": nullable_instant,
+            }
+        ),
+        "legacy_link_record": object_schema(
+            {
+                "id": identifier,
+                "resolution_id": nullable_identifier,
+                "planned_session_id": identifier,
+                "completed_activity_id": identifier,
+                "linked_duration_seconds": positive_integer,
+                "linked_distance_metres": nullable_positive_integer,
+                "confirmation_source": {"type": "string"},
+                "version": positive_integer,
+                "created_at": instant,
+            }
+        ),
+        "link_decision": object_schema(
+            {
+                "id": identifier,
+                "completed_activity_id": identifier,
+                "link_id": identifier,
+                "action": {"enum": ["changed", "removed"]},
+                "prior_planned_session_id": nullable_identifier,
+                "planned_session_id": nullable_identifier,
+                "prior_source": {
+                    "type": ["string", "null"],
+                    "enum": ["automatic", "athlete_confirmed", "direct", None],
+                },
+                "prior_algorithm_version": nullable_text,
+                "decided_at": instant,
+                "prior_reasons": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string"},
+                },
+            }
+        ),
+        "suggestion_rejection": object_schema(
+            {
+                "id": identifier,
+                "prescription_revision_id": identifier,
+                "completed_activity_id": identifier,
+                "activity_effective_version": {"type": "string", "minLength": 1},
+                "algorithm_version": {"type": "string", "minLength": 1},
+                "rejected_at": instant,
+            }
+        ),
+        "session_outcome": object_schema(
+            {
+                "id": identifier,
+                "planned_session_id": identifier,
+                "disposition": {
+                    "enum": [
+                        "completed",
+                        "modified",
+                        "rescheduled",
+                        "intentionally_skipped",
+                        "unintentionally_missed",
+                        "replaced",
+                    ]
+                },
+                "reason": nullable_text,
+                "recorded_at": instant,
+            }
+        ),
+        "check_in": object_schema(
+            {
+                "id": identifier,
+                "planned_session_id": identifier,
+                "readiness": {"type": ["integer", "null"], "minimum": 1, "maximum": 5},
+                "post_session_effort": {
+                    "type": ["integer", "null"],
+                    "minimum": 1,
+                    "maximum": 10,
+                },
+                "feel": {"type": ["integer", "null"], "minimum": 1, "maximum": 5},
+                "notes": nullable_text,
+                "recorded_at": instant,
+            }
+        ),
+    }
+    documents = {
+        "planned_sessions.json": record_file("planned_session"),
+        "prescription_revisions.json": record_file("prescription_revision"),
+        "completed_activities.json": record_file("completed_activity"),
+        "import_provenance.json": record_file("import_provenance"),
+        "corrections.json": record_file("correction"),
+        "links.json": record_file("link"),
+        "match_evaluations.json": record_file("match_evaluation"),
+        "legacy_link_resolutions.json": record_file("legacy_link_resolution"),
+        "legacy_link_records.json": record_file("legacy_link_record"),
+        "link_decisions.json": record_file("link_decision"),
+        "suggestion_rejections.json": record_file("suggestion_rejection"),
+        "session_outcomes.json": record_file("session_outcome"),
+        "check_ins.json": record_file("check_in"),
+    }
+    record_count_properties = {path: {"type": "integer", "minimum": 0} for path in documents}
+    checksum = {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+    inventory_item = {
+        "oneOf": [
+            object_schema(
+                {
+                    "path": {"type": "string", "minLength": 1},
+                    "sha256": checksum,
+                    "bytes": {"type": "integer", "minimum": 0},
+                }
+            ),
+            object_schema(
+                {
+                    "path": {"const": "manifest.json"},
+                    "sha256": checksum,
+                    "checksum_scope": {"type": "string", "minLength": 1},
+                }
+            ),
+        ]
+    }
+    manifest = object_schema(
+        {
+            "export_schema_version": {"const": EXPORT_SCHEMA_VERSION},
+            "application_version": {"type": "string"},
+            "created_at": instant,
+            "record_counts": object_schema(record_count_properties),
+            "files": {"type": "array", "items": inventory_item},
+            "manifest_content_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        }
+    )
+    catalog = object_schema(
+        {
+            "$schema": {"const": "https://json-schema.org/draft/2020-12/schema"},
+            "$id": {"const": f"https://tempo.local/schemas/{EXPORT_SCHEMA_VERSION}"},
+            "schema_version": {"const": EXPORT_SCHEMA_VERSION},
+            "title": {"type": "string"},
+            "description": {"type": "string"},
+            "documents": {"type": "object"},
+            "$defs": {"type": "object"},
+        }
+    )
+    documents["manifest.json"] = manifest
+    documents[f"schemas/{EXPORT_SCHEMA_VERSION}.json"] = catalog
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": f"https://tempo.local/schemas/{EXPORT_SCHEMA_VERSION}",
         "schema_version": EXPORT_SCHEMA_VERSION,
-        "type": "object",
-        "properties": {
-            "record_file": {"type": "array", "items": {"type": "object"}},
-            "manifest": {
-                "type": "object",
-                "required": ["export_schema_version", "application_version", "created_at", "record_counts", "files"],
-            },
-            "completed_activity": {
-                "type": "object",
-                "required": ["id", "original_values", "effective_values"],
-                "properties": {"original_values": {"type": "object"}, "effective_values": {"type": "object"}},
-            },
-            "raw_export_path": {"type": "string", "pattern": "^raw/sha256/[a-f0-9]{64}\\.fit$"},
-        },
-        "description": "Each record JSON file is a UTF-8 array ordered by stable identifiers and timestamps. JSON-backed record fields are exported as their native JSON types.",
+        "title": "Tempo Stage 1 portable export schema catalog",
+        "description": "Map each exported JSON filename to its schema. Record arrays use deterministic logical ordering; export creation metadata is intentionally variable.",
+        "documents": documents,
+        "$defs": definitions,
     }
 
 

@@ -3,6 +3,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from tempo.measurements import MAX_DISTANCE_METRES, MAX_DURATION_SECONDS
+
 
 class TrainingIntent(StrEnum):
     recovery = "recovery"
@@ -23,8 +25,8 @@ class PlannedRunCreate(BaseModel):
     training_intent: TrainingIntent
     priority: Priority = Priority.normal
     notes: str | None = Field(default=None, max_length=2000)
-    duration_seconds: int | None = Field(default=None, gt=0)
-    distance_metres: int | None = Field(default=None, gt=0)
+    duration_seconds: int | None = Field(default=None, gt=0, le=MAX_DURATION_SECONDS)
+    distance_metres: int | None = Field(default=None, gt=0, le=MAX_DISTANCE_METRES)
 
     @model_validator(mode="after")
     def require_prescription(self) -> "PlannedRunCreate":

@@ -1,7 +1,9 @@
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select, text
+from sqlalchemy import create_engine, func, inspect, select, text
 from sqlalchemy.orm import Session
 
+from tempo.main import app
+from tempo.measurements import MAX_DISTANCE_METRES, MAX_DURATION_SECONDS
 from tempo.planning.models import PlannedSession, PrescriptionRevision
 
 
@@ -89,3 +91,51 @@ def test_accepts_duration_only_and_distance_only(client: TestClient) -> None:
 
     assert client.post("/api/planned-runs", json=duration_only).status_code == 201
     assert client.post("/api/planned-runs", json=distance_only).status_code == 201
+
+
+def test_measurement_boundaries_persist_and_are_in_openapi(client: TestClient) -> None:
+    request = valid_run()
+    request["duration_seconds"] = MAX_DURATION_SECONDS
+    request["distance_metres"] = MAX_DISTANCE_METRES
+
+    response = client.post("/api/planned-runs", json=request)
+
+    assert response.status_code == 201
+    assert response.json()["active_revision"]["duration_seconds"] == MAX_DURATION_SECONDS
+    assert response.json()["active_revision"]["distance_metres"] == MAX_DISTANCE_METRES
+    properties = app.openapi()["components"]["schemas"]["PlannedRunCreate"]["properties"]
+    assert properties["duration_seconds"]["anyOf"][0]["maximum"] == MAX_DURATION_SECONDS
+    assert properties["distance_metres"]["anyOf"][0]["maximum"] == MAX_DISTANCE_METRES
+
+
+def test_oversized_measurements_are_actionable_and_atomic(
+    client: TestClient, database_url: str
+) -> None:
+    request = valid_run()
+    request["duration_seconds"] = MAX_DURATION_SECONDS + 1
+    request["distance_metres"] = MAX_DISTANCE_METRES + 1
+
+    response = client.post("/api/planned-runs", json=request)
+
+    assert response.status_code == 422
+    assert {error["loc"][-1] for error in response.json()["detail"]} == {
+        "duration_seconds",
+        "distance_metres",
+    }
+    with Session(create_engine(database_url)) as session:
+        assert session.scalar(select(func.count()).select_from(PlannedSession)) == 0
+        assert session.scalar(select(func.count()).select_from(PrescriptionRevision)) == 0
+
+
+def test_sqlite_prescription_constraints_preserve_legacy_integer_range(
+    client: TestClient, database_url: str
+) -> None:
+    constraints = inspect(create_engine(database_url)).get_check_constraints(
+        "prescription_revisions"
+    )
+    sql = " ".join(constraint["sqltext"] for constraint in constraints)
+
+    assert "duration_seconds > 0" in sql
+    assert "distance_metres > 0" in sql
+    assert str(MAX_DURATION_SECONDS) not in sql
+    assert str(MAX_DISTANCE_METRES) not in sql

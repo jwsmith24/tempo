@@ -6,13 +6,14 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, inspect, select
 from sqlalchemy.orm import Session
 
 from tempo.activities.models import ActivityImportProvenance, CompletedActivity
 from tempo.activities.import_service import import_fit_activity
 from tempo.activities import router as activities_router
 from tempo.activities import fit_adapter
+from tempo.measurements import MAX_DISTANCE_METRES, MAX_DURATION_SECONDS
 
 FIXTURE = Path(__file__).parent / "fixtures" / "garmin-fenix-5-run.fit"
 UNSUPPORTED_FIXTURE = Path(__file__).parent / "fixtures" / "garmin-fenix-5-bike.fit"
@@ -23,6 +24,31 @@ def import_fixture(client: TestClient, content: bytes | None = None):
         "/api/activities/imports/fit",
         files={"file": ("run.fit", content if content is not None else FIXTURE.read_bytes(), "application/octet-stream")},
     )
+
+
+def mock_fit_session(
+    monkeypatch: pytest.MonkeyPatch, elapsed: object, distance: object
+) -> None:
+    fields = [
+        SimpleNamespace(name="sport", value="running"),
+        SimpleNamespace(name="start_time", value=datetime(2026, 9, 20, 6, 30, tzinfo=UTC)),
+        SimpleNamespace(name="total_elapsed_time", value=elapsed),
+        SimpleNamespace(name="total_distance", value=distance),
+    ]
+    frame = SimpleNamespace(
+        frame_type=fit_adapter.fitdecode.FIT_FRAME_DATA,
+        name="session",
+        fields=fields,
+    )
+
+    class Reader:
+        def __enter__(self):
+            return iter([frame])
+
+        def __exit__(self, *args):
+            return None
+
+    monkeypatch.setattr(fit_adapter.fitdecode, "FitReader", lambda *args, **kwargs: Reader())
 
 
 def test_fit_without_file_identity_uses_checksum_source_identity(
@@ -171,7 +197,7 @@ def test_restart_recovers_committed_pending_raw_file(
     pending = raw_directory / f".{checksum}.pending"
     final.replace(pending)
 
-    with TestClient(client.app) as restarted_client:
+    with TestClient(client.app, base_url="http://127.0.0.1") as restarted_client:
         response = restarted_client.get(f"/api/activities/{activity['id']}")
 
     assert response.status_code == 200
@@ -216,3 +242,57 @@ def test_invalid_import_is_actionable_and_atomic(
         assert session.scalar(select(func.count()).select_from(CompletedActivity)) == 0
         assert session.scalar(select(func.count()).select_from(ActivityImportProvenance)) == 0
     assert not (data_directory / "raw" / "fit").exists()
+
+
+def test_fit_measurement_boundaries_persist(
+    client: TestClient, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mock_fit_session(monkeypatch, MAX_DURATION_SECONDS, MAX_DISTANCE_METRES)
+
+    response = import_fixture(client, b"boundary measurements")
+
+    assert response.status_code == 201
+    assert response.json()["duration_seconds"] == MAX_DURATION_SECONDS
+    assert response.json()["distance_metres"] == MAX_DISTANCE_METRES
+    constraints = inspect(create_engine(database_url)).get_check_constraints("completed_activities")
+    sql = " ".join(constraint["sqltext"] for constraint in constraints)
+    assert "duration_seconds > 0" in sql
+    assert "distance_metres > 0" in sql
+    assert str(MAX_DURATION_SECONDS) not in sql
+    assert str(MAX_DISTANCE_METRES) not in sql
+
+
+@pytest.mark.parametrize(
+    ("elapsed", "distance", "message"),
+    [
+        (0.49, 1000.0, "too small to normalize"),
+        (60.0, 0.49, "too small to normalize"),
+        (float("nan"), 1000.0, "non-finite or non-numeric elapsed duration"),
+        (60.0, float("inf"), "non-finite or non-numeric distance"),
+        ("60", 1000.0, "non-finite or non-numeric elapsed duration"),
+        (True, 1000.0, "non-finite or non-numeric elapsed duration"),
+        (10**1000, 1000.0, "exceeds the maximum canonical value"),
+        (MAX_DURATION_SECONDS + 0.51, 1000.0, "exceeds the maximum canonical value"),
+        (60.0, MAX_DISTANCE_METRES + 0.51, "exceeds the maximum canonical value"),
+    ],
+)
+def test_invalid_fit_measurements_are_actionable_and_leave_no_artifacts(
+    client: TestClient,
+    database_url: str,
+    data_directory: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    elapsed: object,
+    distance: object,
+    message: str,
+) -> None:
+    mock_fit_session(monkeypatch, elapsed, distance)
+
+    response = import_fixture(client, b"invalid measurements")
+
+    assert response.status_code == 422
+    assert message in response.json()["detail"]
+    with Session(create_engine(database_url)) as session:
+        assert session.scalar(select(func.count()).select_from(CompletedActivity)) == 0
+        assert session.scalar(select(func.count()).select_from(ActivityImportProvenance)) == 0
+    raw_directory = data_directory / "raw" / "fit"
+    assert not raw_directory.exists()

@@ -1,5 +1,6 @@
-from datetime import UTC, datetime
+import json
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -9,7 +10,14 @@ from tempo.activities.models import CompletedActivity
 from tempo.activities.corrections import effective_activity
 from tempo.activities.router import activity_link_status, activity_response
 from tempo.database import get_session
-from tempo.linking.models import CheckIn, LegacyLinkRecord, LegacyLinkResolution, Link, SessionOutcome
+from tempo.linking.models import (
+    CheckIn,
+    LegacyLinkRecord,
+    LegacyLinkResolution,
+    Link,
+    MatchEvaluation,
+    SessionOutcome,
+)
 from tempo.linking.schemas import (
     ActivityLinkRead,
     ActivityLinkingRead,
@@ -25,16 +33,15 @@ from tempo.linking.schemas import (
     LinkRead,
     LinkRemove,
     MatchCandidateRead,
+    MatchEvaluationRead,
     SessionOutcomeCreate,
     SessionOutcomeRead,
 )
 from tempo.linking.service import (
-    ALGORITHM_VERSION,
     LinkConflict,
     change_link,
     confirm_candidate,
     create_direct_link as create_direct,
-    list_candidates,
     load_planned_session,
     reasons_for,
     remove_link,
@@ -165,17 +172,29 @@ def get_activity_linking(
             LegacyLinkResolution.completed_activity_id == activity_id
         )
     )
+    evaluation = session.scalar(
+        select(MatchEvaluation)
+        .where(MatchEvaluation.completed_activity_id == activity_id)
+        .order_by(MatchEvaluation.evaluated_at.desc(), MatchEvaluation.id.desc())
+    )
+    latest_match_evaluation = None
+    if evaluation is not None:
+        latest_match_evaluation = MatchEvaluationRead(
+            activity_effective_version=evaluation.activity_effective_version,
+            algorithm_version=evaluation.algorithm_version,
+            evaluated_at=evaluation.evaluated_at,
+            candidates=[
+                MatchCandidateRead(
+                    planned_run=require_plan(session, candidate["planned_session_id"]),
+                    reasons=candidate["reasons"],
+                )
+                for candidate in json.loads(evaluation.candidate_results)
+            ],
+        )
     return ActivityLinkingRead(
         activity=activity_response(session, activity, activity_link_status(session, activity_id)),
         link=activity_link,
-        candidates=[
-            MatchCandidateRead(
-                planned_run=planned_run,
-                algorithm_version=ALGORITHM_VERSION,
-                reasons=reasons,
-            )
-            for planned_run, reasons in list_candidates(session, effective_activity(session, activity))
-        ],
+        latest_match_evaluation=latest_match_evaluation,
         legacy_resolution=legacy_read(session, resolution) if resolution else None,
     )
 
@@ -237,7 +256,10 @@ def change_current_link(
     require_activity(session, activity_id)
     link = session.scalar(select(Link).where(Link.completed_activity_id == activity_id))
     if link is None:
-        raise HTTPException(status_code=404, detail="Link not found.")
+        raise HTTPException(
+            status_code=409,
+            detail="This Link changed since it was loaded. Reload and try again.",
+        )
     planned_session = require_plan(session, request.planned_session_id)
     return link_read(
         mutate_link(
@@ -259,7 +281,10 @@ def remove_current_link(
     require_activity(session, activity_id)
     link = session.scalar(select(Link).where(Link.completed_activity_id == activity_id))
     if link is None:
-        raise HTTPException(status_code=404, detail="Link not found.")
+        raise HTTPException(
+            status_code=409,
+            detail="This Link changed since it was loaded. Reload and try again.",
+        )
     try:
         remove_link(session, link, request.expected_version)
         session.commit()

@@ -8,8 +8,14 @@ from tempo.planning.schemas import PlannedRunRead
 
 class MatchCandidateRead(BaseModel):
     planned_run: PlannedRunRead
-    algorithm_version: str
     reasons: list[str]
+
+
+class MatchEvaluationRead(BaseModel):
+    activity_effective_version: str
+    algorithm_version: str
+    evaluated_at: datetime
+    candidates: list[MatchCandidateRead]
 
 
 class DirectLinkCreate(BaseModel):
@@ -69,7 +75,7 @@ class LegacyResolutionRequest(BaseModel):
 class ActivityLinkingRead(BaseModel):
     activity: CompletedActivityRead
     link: ActivityLinkRead | None
-    candidates: list[MatchCandidateRead]
+    latest_match_evaluation: MatchEvaluationRead | None
     legacy_resolution: LegacyResolutionRead | None
 
 

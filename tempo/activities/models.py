@@ -30,7 +30,10 @@ class CompletedActivity(Base):
             "modality IN ('running', 'cycling', 'strength', 'other')",
             name="ck_completed_activity_modality",
         ),
-        CheckConstraint("duration_seconds > 0", name="ck_completed_activity_positive_duration"),
+        CheckConstraint(
+            "duration_seconds > 0",
+            name="ck_completed_activity_positive_duration",
+        ),
         CheckConstraint(
             "distance_metres IS NULL OR distance_metres > 0",
             name="ck_completed_activity_positive_distance",

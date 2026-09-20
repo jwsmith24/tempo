@@ -103,6 +103,11 @@ def test_unmatched_correction_reevaluates_and_linked_evidence_uses_effective_val
     response = correct(client, unmatched["id"], "start_instant", "2026-09-20T08:00:00+00:00")
     assert response.status_code == 201
     assert response.json()["link_status"] == "linked"
+    evaluation = client.get(f"/api/activities/{unmatched['id']}/linking").json()[
+        "latest_match_evaluation"
+    ]
+    assert evaluation["activity_effective_version"] == response.json()["corrections"][-1]["id"]
+    assert [candidate["planned_run"]["id"] for candidate in evaluation["candidates"]] == [run["id"]]
 
     corrected = correct(client, unmatched["id"], "duration_seconds", 3500).json()
     assert corrected["link_status"] == "linked"
@@ -114,3 +119,17 @@ def test_unmatched_correction_reevaluates_and_linked_evidence_uses_effective_val
         assert session.scalar(select(func.count()).select_from(MatchEvaluation)) == 2
         versions = list(session.scalars(select(MatchEvaluation.activity_effective_version)))
         assert versions[0] != versions[1]
+
+
+def test_candidate_confirmation_revalidates_after_correction(client: TestClient) -> None:
+    first = create_run(client, "2026-09-20")
+    create_run(client, "2026-09-20")
+    activity = create_activity(client)
+
+    assert correct(client, activity["id"], "modality", "cycling").status_code == 201
+    response = client.post(
+        f"/api/activities/{activity['id']}/linking/candidates/{first['id']}/confirm"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "These records are no longer eligible for this match candidate."

@@ -33,7 +33,7 @@ const outcomeLabels: Record<SessionOutcomeCreate["disposition"], string> = {
   replaced: "Replaced",
 };
 
-const surfacePanel = "border border-line bg-surface p-[clamp(24px,5vw,48px)] shadow-[7px_7px_0_var(--color-ink)] max-[700px]:shadow-[4px_4px_0_var(--color-ink)]";
+const surfacePanel = "border border-line bg-surface p-[clamp(24px,5vw,48px)] shadow-[7px_7px_0_var(--color-ink)] max-[700px]:shadow-none";
 const formPanel = `${surfacePanel} [&_fieldset]:my-[34px] [&_fieldset]:border-0 [&_fieldset]:border-y [&_fieldset]:border-line [&_fieldset]:px-0 [&_fieldset]:py-[30px] [&_legend]:pr-[18px] [&_legend]:font-mono [&_legend]:text-sm [&_legend]:font-semibold [&_legend]:uppercase [&_legend_span]:ml-2 [&_legend_span]:text-[11px] [&_legend_span]:text-muted`;
 const errorText = "font-sans text-[13px] font-semibold text-danger normal-case";
 const helpText = "font-sans text-xs text-[#687069] normal-case";
@@ -619,6 +619,8 @@ function ActivityDetail({
   onRecordCorrection: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const provenance = activity.import_provenance;
+  const evaluation = linking?.latest_match_evaluation;
+  const candidates = evaluation?.candidates ?? [];
   return (
     <>
     <article className={detailPanel}>
@@ -676,7 +678,7 @@ function ActivityDetail({
         <div className={sectionHeading}><div><span className={revisionBadge}>Whole-activity Link</span><h2>Activity ownership</h2></div></div>
         {linking.link ? (
           <form className={suggestionCard} aria-label="Change current Link" onSubmit={onChange}>
-            <div><strong>{intentLabels[linking.link.planned_run.training_intent]} on {linking.link.planned_run.scheduled_date}</strong><small>{linking.link.link.source.replace("_", " ")} / complete activity</small></div>
+            <div><a href={`/planned-runs/${linking.link.planned_run.id}`}><strong>{intentLabels[linking.link.planned_run.training_intent]} on {linking.link.planned_run.scheduled_date}</strong></a><small>{linking.link.link.source.replace("_", " ")} / complete activity</small></div>
             {linking.link.link.reasons.length > 0 && <ul>{linking.link.link.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>}
             <label><span>Move to Planned Run</span><select name="planned_session_id" required defaultValue={linking.link.planned_run.id}>{plannedRuns.map((plannedRun) => <option key={plannedRun.id} value={plannedRun.id}>{intentLabels[plannedRun.training_intent]} on {plannedRun.scheduled_date}</option>)}</select></label>
             {errors.changeLink && <small className={errorText} id="change-link-error">{errors.changeLink}</small>}
@@ -689,10 +691,18 @@ function ActivityDetail({
         </form> : null}
       </section>
     )}
-    {linking && linking.candidates.length > 1 && (
+    {evaluation && (
+      <section className={linkingPanel} aria-label="Persisted Match Evaluation">
+        <div className={sectionHeading}><div><span className={revisionBadge}>Historical matching evidence</span><h2>Latest Match Evaluation</h2></div><code>{evaluation.algorithm_version}</code></div>
+        <p>Evaluated {evaluation.evaluated_at}. Activity effective version: <code>{evaluation.activity_effective_version}</code>.</p>
+        <p>{candidates.length === 0 ? "No eligible candidates were recorded; the activity was unmatched." : candidates.length === 1 ? "One eligible candidate was recorded and linked automatically." : `${candidates.length} eligible candidates were recorded for athlete selection.`} This evaluation does not record a Session Outcome.</p>
+        {candidates.map((candidate, index) => <article className={suggestionCard} key={candidate.planned_run.id}><div><strong>{index + 1}. {intentLabels[candidate.planned_run.training_intent]} on {candidate.planned_run.scheduled_date}</strong><small>Candidate id: {candidate.planned_run.id}</small></div><ul>{candidate.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></article>)}
+      </section>
+    )}
+    {linking && !linking.link && candidates.length > 1 && (
       <section className={linkingPanel} aria-label="Eligible Planned Run candidates">
-        <div className={sectionHeading}><div><span className={`w-fit ${unmatchedBadge}`}>Athlete selection required</span><h2>Choose one Planned Run</h2></div><code>{linking.candidates[0].algorithm_version}</code></div>
-        {linking.candidates.map((candidate) => {
+        <div className={sectionHeading}><div><span className={`w-fit ${unmatchedBadge}`}>Athlete selection required</span><h2>Choose one Planned Run</h2></div><code>{evaluation?.algorithm_version}</code></div>
+        {candidates.map((candidate) => {
           const plannedRun = candidate.planned_run;
           const linkError = errors[`link-${plannedRun.id}`];
           const errorId = `link-error-${plannedRun.id}`;
@@ -714,7 +724,7 @@ function ActivityDetail({
       {linking.legacy_resolution.records.map((record) => <article className={suggestionCard} key={record.id}><strong>{intentLabels[record.planned_run.training_intent]} on {record.planned_run.scheduled_date}</strong><small>Preserved: {formatDuration(record.linked_duration_seconds)}{record.linked_distance_metres === null ? "" : ` / ${record.linked_distance_metres / 1000} km`}</small><button type="button" onClick={() => onResolveLegacy(record.planned_session_id)}>Use this Planned Run</button></article>)}
       <button type="button" className={secondaryButton} onClick={() => onResolveLegacy(null)}>Resolve with no current Link</button>
     </section>}
-    {linking && !linking.link && linking.candidates.length === 0 && !linking.legacy_resolution ? <p className="border border-line bg-surface p-[38px]">No eligible Planned Runs. This activity remains legitimate unmatched evidence.</p> : linking?.link ? <p className="py-[18px] font-mono text-[13px] font-medium">The complete activity has one Link. Record its separate Session Outcome and Check-in below.</p> : null}
+    {linking && !linking.link && candidates.length === 0 && !linking.legacy_resolution ? <p className="border border-line bg-surface p-[38px]">No eligible Planned Runs. This activity remains legitimate unmatched evidence.</p> : linking?.link ? <p className="py-[18px] font-mono text-[13px] font-medium">The complete activity has one Link. Record its separate Session Outcome and Check-in below.</p> : null}
     {linking?.link && evidence?.planned_run.id === linking.link.planned_run.id && <SessionObservations evidence={evidence} errors={errors} onRecordOutcome={onRecordOutcome} onRecordCheckIn={onRecordCheckIn} />}
     </>
   );
@@ -815,8 +825,10 @@ function RunDetail({
           <article className="border border-line bg-surface p-[clamp(22px,4vw,34px)] [&_h3]:text-2xl [&_h3]:font-bold" key={item.link.id}>
             <h3>{item.activity.title || "Running activity"}</h3>
             <dl>
-               <div><dt>Actual duration</dt><dd>{formatDuration(item.activity.duration_seconds)}</dd></div>
-               <div><dt>Actual distance</dt><dd>{item.activity.distance_metres === null ? "Not recorded" : `${item.activity.distance_metres / 1000} km`}</dd></div>
+               <div><dt>Original duration</dt><dd>{formatDuration(Number(item.activity.original_values.duration_seconds))}</dd></div>
+               <div><dt>Effective duration</dt><dd>{formatDuration(item.activity.duration_seconds)}{Number(item.activity.original_values.duration_seconds) !== item.activity.duration_seconds && " (Corrected)"}</dd></div>
+               <div><dt>Original distance</dt><dd>{item.activity.original_values.distance_metres === null ? "Not recorded" : `${Number(item.activity.original_values.distance_metres) / 1000} km`}</dd></div>
+               <div><dt>Effective distance</dt><dd>{item.activity.distance_metres === null ? "Not recorded" : `${item.activity.distance_metres / 1000} km`}{item.activity.original_values.distance_metres !== item.activity.distance_metres && " (Corrected)"}</dd></div>
               <div><dt>Link source</dt><dd>{item.link.source.replace("_", " ")}</dd></div>
             </dl>
             <div className={notesBlock}><span className={labelText}>Source provenance</span><p>{item.activity.import_provenance ? `${item.activity.import_provenance.adapter_type} / ${item.activity.import_provenance.importer_name} ${item.activity.import_provenance.importer_version} / imported ${item.activity.import_provenance.imported_at} / raw source ${item.activity.import_provenance.raw_file_identity}` : "Manual athlete entry; no imported raw source."}</p></div>

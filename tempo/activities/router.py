@@ -24,6 +24,7 @@ from tempo.activities.schemas import (
     ManualActivityCreate,
 )
 from tempo.database import get_session
+from tempo.measurements import MAX_DISTANCE_METRES, MAX_DURATION_SECONDS
 
 router = APIRouter(prefix="/api/activities", tags=["completed-activities"])
 MAX_FIT_BYTES = 32 * 1024 * 1024
@@ -197,14 +198,26 @@ def validate_replacement(activity: CompletedActivity, request: CorrectionCreate)
             raise HTTPException(status_code=422, detail="Choose a supported activity modality.")
         return value
     if field == "duration_seconds":
-        if isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= 604_800:
-            raise HTTPException(status_code=422, detail="Duration must be between 1 and 604800 seconds.")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not 0 < value <= MAX_DURATION_SECONDS
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Duration must be between 1 and {MAX_DURATION_SECONDS} seconds.",
+            )
         return value
     if field == "distance_metres":
         if value is not None and (
-            isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= 1_000_000_000
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not 0 < value <= MAX_DISTANCE_METRES
         ):
-            raise HTTPException(status_code=422, detail="Distance must be null or between 1 and 1000000000 metres.")
+            raise HTTPException(
+                status_code=422,
+                detail=f"Distance must be null or between 1 and {MAX_DISTANCE_METRES} metres.",
+            )
         return value
     if not isinstance(value, str) or not value.strip():
         raise HTTPException(status_code=422, detail=f"{field.title()} must be non-blank text.")

@@ -38,7 +38,7 @@ def client(database_url: str, data_directory: Path) -> Generator[TestClient, Non
             yield session
 
     app.dependency_overrides[get_session] = override_session
-    with TestClient(app) as test_client:
+    with TestClient(app, base_url="http://127.0.0.1") as test_client:
         yield test_client
     app.dependency_overrides.clear()
     test_engine.dispose()

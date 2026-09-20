@@ -3,8 +3,11 @@ from datetime import datetime
 from hashlib import sha256
 from importlib.metadata import version
 from io import BytesIO
+from math import isfinite
 
 import fitdecode
+
+from tempo.measurements import MAX_DISTANCE_METRES, MAX_DURATION_SECONDS
 
 
 class FitImportError(ValueError):
@@ -33,6 +36,28 @@ class DecodedFitActivity:
 
 IMPORTER_NAME = "fitdecode"
 IMPORTER_VERSION = version("fitdecode")
+
+
+def normalize_measurement(value: object, field: str, maximum: int) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or isinstance(value, float)
+        and not isfinite(value)
+    ):
+        raise FitImportError(f"The FIT activity contains a non-finite or non-numeric {field}.")
+    if value <= 0:
+        raise FitImportError(f"The FIT activity has no positive {field}.")
+    normalized = round(value)
+    if normalized < 1:
+        raise FitImportError(
+            f"The FIT activity {field} is too small to normalize to a whole canonical unit."
+        )
+    if normalized > maximum:
+        raise FitImportError(
+            f"The FIT activity {field} exceeds the maximum canonical value of {maximum}."
+        )
+    return normalized
 
 
 def decode_running_activity(content: bytes) -> DecodedFitActivity:
@@ -66,10 +91,14 @@ def decode_running_activity(content: bytes) -> DecodedFitActivity:
     distance = session.get("total_distance")
     if not isinstance(start, datetime) or start.tzinfo is None or start.utcoffset() is None:
         raise FitImportError("The FIT activity has no timezone-aware start instant.")
-    if not isinstance(elapsed, (int, float)) or elapsed <= 0:
-        raise FitImportError("The FIT activity has no positive elapsed duration.")
-    if distance is not None and (not isinstance(distance, (int, float)) or distance <= 0):
-        raise FitImportError("The FIT activity contains an invalid distance.")
+    duration_seconds = normalize_measurement(
+        elapsed, "elapsed duration", MAX_DURATION_SECONDS
+    )
+    distance_metres = (
+        normalize_measurement(distance, "distance", MAX_DISTANCE_METRES)
+        if distance is not None
+        else None
+    )
 
     identity_parts = (
         file_id.get("manufacturer") if file_id else None,
@@ -88,6 +117,6 @@ def decode_running_activity(content: bytes) -> DecodedFitActivity:
         source_identity=source_identity,
         checksum_sha256=checksum,
         start_instant=start,
-        duration_seconds=round(elapsed),
-        distance_metres=round(distance) if distance is not None else None,
+        duration_seconds=duration_seconds,
+        distance_metres=distance_metres,
     )

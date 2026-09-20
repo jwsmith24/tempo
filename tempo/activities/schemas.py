@@ -3,6 +3,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from tempo.measurements import MAX_DISTANCE_METRES, MAX_DURATION_SECONDS
+
 
 class ActivityModality(StrEnum):
     running = "running"
@@ -25,8 +27,8 @@ class ActivityLinkStatus(StrEnum):
 class ManualActivityCreate(BaseModel):
     modality: ActivityModality
     start_instant: datetime
-    duration_seconds: int = Field(gt=0, le=604_800)
-    distance_metres: int | None = Field(default=None, gt=0, le=1_000_000_000)
+    duration_seconds: int = Field(gt=0, le=MAX_DURATION_SECONDS)
+    distance_metres: int | None = Field(default=None, gt=0, le=MAX_DISTANCE_METRES)
     title: str | None = Field(default=None, max_length=200)
     notes: str | None = Field(default=None, max_length=2000)
 
