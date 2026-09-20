@@ -351,6 +351,37 @@ export function App() {
     setStatus(plannedSessionId ? "Legacy Links resolved to the selected Planned Run. Preserved relationships remain in history." : "Legacy Links resolved with no current Link. Preserved relationships remain in history.");
   }
 
+  async function recordCorrection(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!activity) return;
+    setErrors({});
+    const form = new FormData(event.currentTarget);
+    const fieldName = String(form.get("field_name"));
+    const rawValue = String(form.get("replacement_value"));
+    let replacementValue: string | number | null = rawValue;
+    if (fieldName === "duration_seconds" || fieldName === "distance_metres") {
+      replacementValue = rawValue === "" && fieldName === "distance_metres" ? null : Number(rawValue);
+    }
+    const response = await fetch(`/api/activities/${activity.id}/corrections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        field_name: fieldName,
+        replacement_value: replacementValue,
+        reason: String(form.get("reason")),
+      }),
+    });
+    if (!response.ok) {
+      const result = (await response.json()) as { detail?: string | Array<{ msg?: string }> };
+      const detail = typeof result.detail === "string" ? result.detail : result.detail?.[0]?.msg;
+      setErrors({ correction: detail || "Correction was not recorded." });
+      setStatus("Correction was not recorded. Review the highlighted fields.");
+      return;
+    }
+    await refreshActivityLinking(activity.id);
+    setStatus("Correction recorded. Original evidence remains preserved.");
+  }
+
   async function refreshEvidence(plannedSessionId: string): Promise<boolean> {
     const response = await fetch(`/api/planned-runs/${plannedSessionId}/linking`);
     if (!response.ok) {
@@ -444,7 +475,7 @@ export function App() {
         </p>
       </section>
       <p className="mb-[18px] min-h-6 font-mono text-[13px] font-medium" role="status" aria-live="polite">{loading ? "Loading local record..." : status}</p>
-      {activity ? <ActivityDetail activity={activity} linking={activityLinking} plannedRuns={plannedRuns} evidence={evidence} errors={errors} onConfirm={confirmCandidate} onCreateDirect={createDirectLink} onChange={changeDirectLink} onRemove={removeDirectLink} onResolveLegacy={resolveLegacy} onRecordOutcome={recordOutcome} onRecordCheckIn={recordCheckIn} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : currentRoute === "activity-import" ? <ImportForm onSubmit={importActivity} errors={errors} /> : run ? <RunDetail run={run} evidence={evidence} errors={errors} onRecordOutcome={recordOutcome} onRecordCheckIn={recordCheckIn} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
+      {activity ? <ActivityDetail activity={activity} linking={activityLinking} plannedRuns={plannedRuns} evidence={evidence} errors={errors} onConfirm={confirmCandidate} onCreateDirect={createDirectLink} onChange={changeDirectLink} onRemove={removeDirectLink} onResolveLegacy={resolveLegacy} onRecordOutcome={recordOutcome} onRecordCheckIn={recordCheckIn} onRecordCorrection={recordCorrection} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : currentRoute === "activity-import" ? <ImportForm onSubmit={importActivity} errors={errors} /> : run ? <RunDetail run={run} evidence={evidence} errors={errors} onRecordOutcome={recordOutcome} onRecordCheckIn={recordCheckIn} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
     </main>
   );
 }
@@ -553,6 +584,7 @@ function ActivityDetail({
   onResolveLegacy,
   onRecordOutcome,
   onRecordCheckIn,
+  onRecordCorrection,
 }: {
   activity: CompletedActivity;
   linking: ActivityLinking | null;
@@ -566,6 +598,7 @@ function ActivityDetail({
   onResolveLegacy: (plannedSessionId: string | null) => void;
   onRecordOutcome: (event: FormEvent<HTMLFormElement>) => void;
   onRecordCheckIn: (event: FormEvent<HTMLFormElement>) => void;
+  onRecordCorrection: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const provenance = activity.import_provenance;
   return (
@@ -596,8 +629,30 @@ function ActivityDetail({
         <div><dt>Duration</dt><dd>{provenance.original_normalized_values.duration_seconds} sec</dd></div>
         <div><dt>Distance</dt><dd>{provenance.original_normalized_values.distance_metres ?? "Not recorded"} m</dd></div>
       </dl></div>}
+      <div className={notesBlock}><span className={labelText}>Original canonical values</span><dl>
+        <div><dt>Modality</dt><dd>{activity.original_values.modality}</dd></div>
+        <div><dt>Start instant</dt><dd>{activity.original_values.start_instant}</dd></div>
+        <div><dt>Duration</dt><dd>{activity.original_values.duration_seconds} sec</dd></div>
+        <div><dt>Distance</dt><dd>{activity.original_values.distance_metres ?? "Not recorded"}</dd></div>
+        <div><dt>Title</dt><dd>{activity.original_values.title ?? "Not recorded"}</dd></div>
+        <div><dt>Notes</dt><dd>{activity.original_values.notes ?? "Not recorded"}</dd></div>
+      </dl></div>
       <footer><span>{provenance ? "Source: Garmin FIT import" : "Source: manual / Created by athlete entry"}</span><code>{activity.id}</code></footer>
     </article>
+    <section className={linkingPanel} aria-label="Activity Corrections">
+      <div className={sectionHeading}><div><span className={revisionBadge}>Append-only history</span><h2>Correct interpreted evidence</h2></div></div>
+      <p>Corrections replace the effective value used for matching and evidence while preserving the original source value.</p>
+      <form className={suggestionCard} aria-label="Record Correction" onSubmit={onRecordCorrection}>
+        <label><span>Field</span><select name="field_name" defaultValue="duration_seconds">
+          <option value="start_instant">Start instant</option><option value="modality">Modality</option><option value="duration_seconds">Duration seconds</option><option value="distance_metres">Distance metres</option>{activity.original_values.title !== null && <option value="title">Title</option>}{activity.original_values.notes !== null && <option value="notes">Notes</option>}
+        </select></label>
+        <label><span>Replacement value</span><input name="replacement_value" aria-invalid={Boolean(errors.correction)} aria-describedby={errors.correction ? "correction-error correction-help" : "correction-help"} /><small id="correction-help" className={helpText}>Use an ISO instant with offset for start time; leave distance blank to remove it.</small></label>
+        <label><span>Reason</span><textarea name="reason" rows={2} required maxLength={2000} aria-invalid={Boolean(errors.correction)} aria-describedby={errors.correction ? "correction-error" : undefined} /></label>
+        {errors.correction && <small className={errorText} id="correction-error">{errors.correction}</small>}
+        <button type="submit">Record Correction</button>
+      </form>
+      {activity.corrections.length > 0 && <div className="grid gap-3" aria-label="Correction history">{activity.corrections.map((correction) => <article className={suggestionCard} key={correction.id}><strong>{correction.field_name.replace("_", " ")}</strong><small>Replaced {String(correction.source_value)} with {correction.replacement_value ?? "not recorded"} / recorded {correction.recorded_at}</small><p>{correction.reason}</p></article>)}</div>}
+    </section>
     {linking && (
       <section className={`${linkingPanel} border-positive`} aria-label="Confirmed Links">
         <div className={sectionHeading}><div><span className={revisionBadge}>Whole-activity Link</span><h2>Activity ownership</h2></div></div>

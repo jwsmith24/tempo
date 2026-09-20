@@ -91,6 +91,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/activities/{activity_id}/corrections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Correction */
+        post: operations["create_correction_api_activities__activity_id__corrections_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/planned-runs/{planned_session_id}/outcomes": {
         parameters: {
             query?: never;
@@ -312,6 +329,41 @@ export interface components {
             /** @default unmatched */
             link_status: components["schemas"]["ActivityLinkStatus"];
             import_provenance?: components["schemas"]["ImportProvenanceRead"] | null;
+            /** Original Values */
+            original_values: {
+                [key: string]: string | number | null;
+            };
+            /** Corrections */
+            corrections: components["schemas"]["CorrectionRead"][];
+        };
+        /** CorrectionCreate */
+        CorrectionCreate: {
+            /** Field Name */
+            field_name: string;
+            /** Replacement Value */
+            replacement_value: string | number | null;
+            /** Reason */
+            reason: string;
+        };
+        /** CorrectionRead */
+        CorrectionRead: {
+            /** Id */
+            id: string;
+            /** Completed Activity Id */
+            completed_activity_id: string;
+            /** Field Name */
+            field_name: string;
+            /** Source Value */
+            source_value: string | number | null;
+            /** Replacement Value */
+            replacement_value: string | number | null;
+            /** Reason */
+            reason: string;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
         };
         /** DirectLinkCreate */
         DirectLinkCreate: {
@@ -763,6 +815,41 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompletedActivityRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_correction_api_activities__activity_id__corrections_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                activity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CorrectionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };

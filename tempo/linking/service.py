@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from tempo.activities.corrections import EffectiveActivity, effective_activity, effective_version, list_corrections
 from tempo.activities.models import CompletedActivity
 from tempo.linking.models import LegacyLinkResolution, Link, LinkDecision, MatchEvaluation
 from tempo.planning.models import PlannedSession
@@ -33,7 +34,7 @@ def match_reasons(planned_date: date, activity_date: date) -> list[str]:
     return ["Both records have running modality.", timing, "The activity has no current Link."]
 
 
-def candidate_sort_key(planned_session: PlannedSession, activity: CompletedActivity) -> tuple[float, str]:
+def candidate_sort_key(planned_session: PlannedSession, activity: CompletedActivity | EffectiveActivity) -> tuple[float, str]:
     local_noon = datetime.combine(
         planned_session.scheduled_date, time(12), tzinfo=activity.start_instant.tzinfo
     )
@@ -54,7 +55,7 @@ def unresolved_legacy(session: Session, activity_id: str) -> LegacyLinkResolutio
 
 
 def list_candidates(
-    session: Session, activity: CompletedActivity
+    session: Session, activity: CompletedActivity | EffectiveActivity
 ) -> list[tuple[PlannedSession, list[str]]]:
     if (
         activity.modality != "running"
@@ -111,11 +112,13 @@ def _new_link(
 
 
 def evaluate_after_ingestion(session: Session, activity: CompletedActivity) -> Link | None:
-    candidates = list_candidates(session, activity)
+    corrections = list_corrections(session, activity.id)
+    effective = effective_activity(session, activity, corrections)
+    candidates = list_candidates(session, effective)
     session.add(
         MatchEvaluation(
             completed_activity_id=activity.id,
-            activity_effective_version=activity.created_at.astimezone(UTC).isoformat(),
+            activity_effective_version=effective_version(activity, corrections),
             algorithm_version=ALGORITHM_VERSION,
             candidate_results=json.dumps(
                 [
@@ -129,16 +132,15 @@ def evaluate_after_ingestion(session: Session, activity: CompletedActivity) -> L
     if len(candidates) != 1:
         return None
     planned_session, reasons = candidates[0]
-    return _new_link(
-        session, planned_session, activity, "automatic", ALGORITHM_VERSION, reasons
-    )
+    return _new_link(session, planned_session, activity, "automatic", ALGORITHM_VERSION, reasons)
 
 
 def confirm_candidate(
     session: Session, planned_session: PlannedSession, activity: CompletedActivity
 ) -> Link:
+    effective = effective_activity(session, activity)
     candidate = next(
-        ((plan, reasons) for plan, reasons in list_candidates(session, activity) if plan.id == planned_session.id),
+        ((plan, reasons) for plan, reasons in list_candidates(session, effective) if plan.id == planned_session.id),
         None,
     )
     if candidate is None:

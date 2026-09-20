@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tempo.activities.models import CompletedActivity
+from tempo.activities.corrections import effective_activity
 from tempo.activities.router import activity_link_status, activity_response
 from tempo.database import get_session
 from tempo.linking.models import CheckIn, LegacyLinkRecord, LegacyLinkResolution, Link, SessionOutcome
@@ -165,7 +166,7 @@ def get_activity_linking(
         )
     )
     return ActivityLinkingRead(
-        activity=activity_response(activity, activity_link_status(session, activity_id)),
+        activity=activity_response(session, activity, activity_link_status(session, activity_id)),
         link=activity_link,
         candidates=[
             MatchCandidateRead(
@@ -173,7 +174,7 @@ def get_activity_linking(
                 algorithm_version=ALGORITHM_VERSION,
                 reasons=reasons,
             )
-            for planned_run, reasons in list_candidates(session, activity)
+            for planned_run, reasons in list_candidates(session, effective_activity(session, activity))
         ],
         legacy_resolution=legacy_read(session, resolution) if resolution else None,
     )
@@ -324,12 +325,13 @@ def get_link_evidence(
     distances = []
     for link in links:
         activity = require_activity(session, link.completed_activity_id)
-        total_duration += activity.duration_seconds
-        distances.append(activity.distance_metres)
+        effective = effective_activity(session, activity)
+        total_duration += effective.duration_seconds
+        distances.append(effective.distance_metres)
         evidence.append(
             LinkActivityEvidenceRead(
                 link=link_read(link),
-                activity=activity_response(activity, "linked"),
+                activity=activity_response(session, activity, "linked"),
             )
         )
     total_distance = (

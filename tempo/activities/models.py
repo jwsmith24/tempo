@@ -78,3 +78,25 @@ class ActivityImportProvenance(Base):
     original_normalized_values: Mapped[str] = mapped_column(Text)
 
     activity: Mapped[CompletedActivity] = relationship(back_populates="import_provenance")
+
+
+class Correction(Base):
+    __tablename__ = "corrections"
+    __table_args__ = (
+        CheckConstraint(
+            "field_name IN ('start_instant', 'modality', 'duration_seconds', "
+            "'distance_metres', 'title', 'notes')",
+            name="ck_correction_field_name",
+        ),
+        Index("ix_correction_activity", "completed_activity_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    completed_activity_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("completed_activities.id", ondelete="CASCADE")
+    )
+    field_name: Mapped[str] = mapped_column(String(32))
+    source_value: Mapped[str] = mapped_column(Text)
+    replacement_value: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(Text)
+    recorded_at: Mapped[datetime] = mapped_column(UTCInstant())

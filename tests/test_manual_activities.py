@@ -31,6 +31,15 @@ def test_create_retrieve_and_list_unmatched_manual_activity(
         "creation_provenance": "athlete_entry",
         "created_at": created["created_at"],
         "link_status": "unmatched",
+        "original_values": {
+            "start_instant": valid_activity()["start_instant"],
+            "modality": "running",
+            "duration_seconds": 2715,
+            "distance_metres": 7421,
+            "title": "Morning progression",
+            "notes": "Finished relaxed.",
+        },
+        "corrections": [],
     }
     assert created["start_instant"].endswith("+05:30")
     assert created["created_at"].endswith("Z")

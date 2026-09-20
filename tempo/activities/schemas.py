@@ -49,6 +49,32 @@ class ImportProvenanceRead(BaseModel):
     original_normalized_values: dict[str, str | int | None]
 
 
+class CorrectionCreate(BaseModel):
+    field_name: str = Field(
+        pattern="^(start_instant|modality|duration_seconds|distance_metres|title|notes)$"
+    )
+    replacement_value: str | int | None
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("reason")
+    @classmethod
+    def reason_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Reason must not be blank.")
+        return value
+
+
+class CorrectionRead(BaseModel):
+    id: str
+    completed_activity_id: str
+    field_name: str
+    source_value: str | int | None
+    replacement_value: str | int | None
+    reason: str
+    recorded_at: datetime
+
+
 class CompletedActivityRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -64,3 +90,5 @@ class CompletedActivityRead(BaseModel):
     created_at: datetime
     link_status: ActivityLinkStatus = ActivityLinkStatus.unmatched
     import_provenance: ImportProvenanceRead | None = None
+    original_values: dict[str, str | int | None]
+    corrections: list[CorrectionRead]

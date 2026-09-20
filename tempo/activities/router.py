@@ -7,9 +7,22 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tempo.activities.fit_adapter import FitImportError
+from tempo.activities.corrections import (
+    deserialize_value,
+    effective_activity,
+    list_corrections,
+    original_values,
+    serialize_value,
+)
 from tempo.activities.import_service import ensure_raw_files, import_fit_activity
-from tempo.activities.models import CompletedActivity
-from tempo.activities.schemas import CompletedActivityRead, ImportProvenanceRead, ManualActivityCreate
+from tempo.activities.models import CompletedActivity, Correction
+from tempo.activities.schemas import (
+    CompletedActivityRead,
+    CorrectionCreate,
+    CorrectionRead,
+    ImportProvenanceRead,
+    ManualActivityCreate,
+)
 from tempo.database import get_session
 
 router = APIRouter(prefix="/api/activities", tags=["completed-activities"])
@@ -17,18 +30,32 @@ MAX_FIT_BYTES = 32 * 1024 * 1024
 UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
+def correction_read(correction: Correction) -> CorrectionRead:
+    return CorrectionRead(
+        id=correction.id,
+        completed_activity_id=correction.completed_activity_id,
+        field_name=correction.field_name,
+        source_value=deserialize_value(correction.source_value),
+        replacement_value=deserialize_value(correction.replacement_value),
+        reason=correction.reason,
+        recorded_at=correction.recorded_at,
+    )
+
+
 def activity_response(
-    activity: CompletedActivity, link_status: str = "unmatched"
+    session: Session, activity: CompletedActivity, link_status: str = "unmatched"
 ) -> CompletedActivityRead:
     provenance = activity.import_provenance
+    corrections = list_corrections(session, activity.id)
+    effective = effective_activity(session, activity, corrections)
     return CompletedActivityRead(
         id=activity.id,
-        modality=activity.modality,
-        start_instant=activity.start_instant,
-        duration_seconds=activity.duration_seconds,
-        distance_metres=activity.distance_metres,
-        title=activity.title,
-        notes=activity.notes,
+        modality=effective.modality,
+        start_instant=effective.start_instant,
+        duration_seconds=effective.duration_seconds,
+        distance_metres=effective.distance_metres,
+        title=effective.title,
+        notes=effective.notes,
         entry_source=activity.entry_source,
         creation_provenance=activity.creation_provenance,
         created_at=activity.created_at,
@@ -47,6 +74,8 @@ def activity_response(
             if provenance is not None
             else None
         ),
+        original_values=original_values(activity),
+        corrections=[correction_read(correction) for correction in corrections],
     )
 
 
@@ -92,7 +121,7 @@ def create_manual_activity(
     evaluate_after_ingestion(session, activity)
     session.commit()
     session.refresh(activity)
-    return activity_response(activity, activity_link_status(session, activity.id))
+    return activity_response(session, activity, activity_link_status(session, activity.id))
 
 
 @router.post(
@@ -118,7 +147,7 @@ async def import_fit(
         activity = import_fit_activity(content, session)
     except FitImportError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return activity_response(activity, activity_link_status(session, activity.id))
+    return activity_response(session, activity, activity_link_status(session, activity.id))
 
 
 @router.get("", response_model=list[CompletedActivityRead], response_model_exclude_none=True)
@@ -131,7 +160,7 @@ def list_activities(session: Session = Depends(get_session)) -> list[CompletedAc
         reverse=True,
     )
     return [
-        activity_response(activity, activity_link_status(session, activity.id))
+        activity_response(session, activity, activity_link_status(session, activity.id))
         for activity in sorted_activities
     ]
 
@@ -145,4 +174,75 @@ def get_activity(
         raise HTTPException(status_code=404, detail="Completed Activity not found.")
     if activity.import_provenance is not None:
         ensure_raw_files(session)
-    return activity_response(activity, activity_link_status(session, activity.id))
+    return activity_response(session, activity, activity_link_status(session, activity.id))
+
+
+def validate_replacement(activity: CompletedActivity, request: CorrectionCreate) -> object:
+    value = request.replacement_value
+    field = request.field_name
+    if field in ("title", "notes") and getattr(activity, field) is None:
+        raise HTTPException(status_code=422, detail=f"{field.replace('_', ' ').title()} was not present in the original activity.")
+    if field == "start_instant":
+        if not isinstance(value, str):
+            raise HTTPException(status_code=422, detail="Start instant must be a timezone-aware ISO instant.")
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="Start instant must be a timezone-aware ISO instant.") from error
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise HTTPException(status_code=422, detail="Start instant must include a timezone or UTC offset.")
+        return parsed.isoformat()
+    if field == "modality":
+        if value not in ("running", "cycling", "strength", "other"):
+            raise HTTPException(status_code=422, detail="Choose a supported activity modality.")
+        return value
+    if field == "duration_seconds":
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= 604_800:
+            raise HTTPException(status_code=422, detail="Duration must be between 1 and 604800 seconds.")
+        return value
+    if field == "distance_metres":
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= 1_000_000_000
+        ):
+            raise HTTPException(status_code=422, detail="Distance must be null or between 1 and 1000000000 metres.")
+        return value
+    if not isinstance(value, str) or not value.strip():
+        raise HTTPException(status_code=422, detail=f"{field.title()} must be non-blank text.")
+    maximum = 200 if field == "title" else 2000
+    if len(value) > maximum:
+        raise HTTPException(status_code=422, detail=f"{field.title()} must be {maximum} characters or fewer.")
+    return value
+
+
+@router.post(
+    "/{activity_id}/corrections",
+    response_model=CompletedActivityRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_correction(
+    activity_id: str, request: CorrectionCreate, session: Session = Depends(get_session)
+) -> CompletedActivityRead:
+    session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    activity = session.get(CompletedActivity, activity_id)
+    if activity is None:
+        raise HTTPException(status_code=404, detail="Completed Activity not found.")
+    corrections = list_corrections(session, activity.id)
+    effective = effective_activity(session, activity, corrections)
+    replacement = validate_replacement(activity, request)
+    correction = Correction(
+        completed_activity_id=activity.id,
+        field_name=request.field_name,
+        source_value=serialize_value(getattr(effective, request.field_name)),
+        replacement_value=serialize_value(replacement),
+        reason=request.reason,
+        recorded_at=datetime.now(UTC),
+    )
+    session.add(correction)
+    session.flush()
+    if activity_link_status(session, activity.id) == "unmatched":
+        from tempo.linking.service import evaluate_after_ingestion
+
+        evaluate_after_ingestion(session, activity)
+    session.commit()
+    session.refresh(activity)
+    return activity_response(session, activity, activity_link_status(session, activity.id))
