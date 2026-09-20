@@ -59,7 +59,7 @@ The backend framework and language can change without changing the core contract
 
 Tempo's `generate:api` script first asks FastAPI for its current OpenAPI document, then passes that document to `openapi-typescript`:
 
-```json
+```sh
 "generate:api": "../.venv/bin/python ../scripts/export_openapi.py && openapi-typescript ../openapi.json -o src/api-schema.ts"
 ```
 
