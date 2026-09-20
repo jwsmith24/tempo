@@ -32,6 +32,17 @@ class ManualActivityCreate(BaseModel):
         return value
 
 
+class ImportProvenanceRead(BaseModel):
+    adapter_type: str
+    source_identity: str
+    importer_name: str
+    importer_version: str
+    imported_at: datetime
+    raw_file_identity: str
+    checksum_sha256: str
+    original_normalized_values: dict[str, str | int | None]
+
+
 class CompletedActivityRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -46,3 +57,4 @@ class CompletedActivityRead(BaseModel):
     creation_provenance: str
     created_at: datetime
     reconciliation_status: str = "unmatched"
+    import_provenance: ImportProvenanceRead | None = None

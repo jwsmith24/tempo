@@ -56,6 +56,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/activities/imports/fit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Fit */
+        post: operations["import_fit_api_activities_imports_fit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/activities/{activity_id}": {
         parameters: {
             query?: never;
@@ -87,6 +104,14 @@ export interface components {
          * @enum {string}
          */
         ActivityModality: "running" | "cycling" | "strength" | "other";
+        /** Body_import_fit_api_activities_imports_fit_post */
+        Body_import_fit_api_activities_imports_fit_post: {
+            /**
+             * File
+             * Format: binary
+             */
+            file: string;
+        };
         /** CompletedActivityRead */
         CompletedActivityRead: {
             /** Id */
@@ -118,11 +143,36 @@ export interface components {
              * @default unmatched
              */
             reconciliation_status: string;
+            import_provenance?: components["schemas"]["ImportProvenanceRead"] | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** ImportProvenanceRead */
+        ImportProvenanceRead: {
+            /** Adapter Type */
+            adapter_type: string;
+            /** Source Identity */
+            source_identity: string;
+            /** Importer Name */
+            importer_name: string;
+            /** Importer Version */
+            importer_version: string;
+            /**
+             * Imported At
+             * Format: date-time
+             */
+            imported_at: string;
+            /** Raw File Identity */
+            raw_file_identity: string;
+            /** Checksum Sha256 */
+            checksum_sha256: string;
+            /** Original Normalized Values */
+            original_normalized_values: {
+                [key: string]: string | number | null;
+            };
         };
         /** ManualActivityCreate */
         ManualActivityCreate: {
@@ -322,6 +372,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ManualActivityCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompletedActivityRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_fit_api_activities_imports_fit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_fit_api_activities_imports_fit_post"];
             };
         };
         responses: {

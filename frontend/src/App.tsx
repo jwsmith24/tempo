@@ -25,9 +25,10 @@ function activityId(): string | null {
   return match && match[1] !== "new" ? match[1] : null;
 }
 
-function route(): "run" | "activity-list" | "activity-new" | "activity-detail" {
+function route(): "run" | "activity-list" | "activity-new" | "activity-import" | "activity-detail" {
   if (window.location.pathname === "/activities") return "activity-list";
   if (window.location.pathname === "/activities/new") return "activity-new";
+  if (window.location.pathname === "/activities/import") return "activity-import";
   if (activityId()) return "activity-detail";
   return "run";
 }
@@ -166,6 +167,27 @@ export function App() {
     setStatus("Saved as unmatched training evidence in your local record.");
   }
 
+  async function importActivity(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setErrors({});
+    setStatus("Importing FIT activity...");
+    const form = new FormData(event.currentTarget);
+    const response = await fetch("/api/activities/imports/fit", {
+      method: "POST",
+      body: form,
+    });
+    if (!response.ok) {
+      const result = (await response.json()) as { detail?: string };
+      setErrors({ file: result.detail || "The FIT activity could not be imported." });
+      setStatus("FIT activity was not imported. Review the file error.");
+      return;
+    }
+    const imported = (await response.json()) as CompletedActivity;
+    window.history.pushState({}, "", `/activities/${imported.id}`);
+    setActivity(imported);
+    setStatus("Imported as unmatched training evidence in your local record.");
+  }
+
   const showingActivity = currentRoute !== "run" || activity !== null;
 
   return (
@@ -176,12 +198,13 @@ export function App() {
           <a href="/">Plan a run</a>
           <a href="/activities">Activities</a>
           <a href="/activities/new">Record activity</a>
+          <a href="/activities/import">Import FIT</a>
         </nav>
         <span className="local-mark">Local record</span>
       </header>
       <section className="hero">
         <p className="eyebrow">{showingActivity ? "Evidence / Completed Activities" : "Planning / Running"}</p>
-        <h1>{activity ? "Completed Activity" : currentRoute === "activity-list" ? "Observed work." : currentRoute === "activity-new" ? "Record what happened." : run ? "Planned Run" : "Set the intention."}</h1>
+        <h1>{activity ? "Completed Activity" : currentRoute === "activity-list" ? "Observed work." : currentRoute === "activity-new" ? "Record what happened." : currentRoute === "activity-import" ? "Import observed work." : run ? "Planned Run" : "Set the intention."}</h1>
         <p className="lede">
           {activity
             ? "This is observed training evidence. It remains unmatched until you explicitly reconcile it later."
@@ -189,14 +212,36 @@ export function App() {
               ? "Manual training evidence remains legitimate whether or not it matches a Planned Session."
               : currentRoute === "activity-new"
                 ? "Enter observed training without treating it as proof that a Planned Session was completed."
+              : currentRoute === "activity-import"
+                ? "Import a Garmin running FIT file while retaining its raw source and provenance."
                 : run
             ? "The prescription below is revision 1 of this training intention."
             : "Record what you intend to do. Evidence of what happened stays separate."}
         </p>
       </section>
       <p className="status" role="status" aria-live="polite">{loading ? "Loading local record..." : status}</p>
-      {activity ? <ActivityDetail activity={activity} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : run ? <RunDetail run={run} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
+      {activity ? <ActivityDetail activity={activity} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : currentRoute === "activity-import" ? <ImportForm onSubmit={importActivity} errors={errors} /> : run ? <RunDetail run={run} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
     </main>
+  );
+}
+
+function ImportForm({
+  onSubmit,
+  errors,
+}: {
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  errors: Record<string, string>;
+}) {
+  return (
+    <form className="run-form" onSubmit={onSubmit} noValidate>
+      <label>
+        <span>Garmin FIT activity</span>
+        <input name="file" type="file" accept=".fit,application/octet-stream" required aria-invalid={Boolean(errors.file)} aria-describedby={errors.file ? "fit-file-help fit-file-error" : "fit-file-help"} />
+        <small id="fit-file-help" className="help">Stage 1 supports running activity files only.</small>
+        {errors.file && <small id="fit-file-error" className="error">{errors.file}</small>}
+      </label>
+      <button type="submit">Import FIT Activity <span aria-hidden="true">→</span></button>
+    </form>
   );
 }
 
@@ -272,6 +317,7 @@ function ActivityList({ activities }: { activities: CompletedActivity[] }) {
 }
 
 function ActivityDetail({ activity }: { activity: CompletedActivity }) {
+  const provenance = activity.import_provenance;
   return (
     <article className="run-detail">
       <div className="detail-heading">
@@ -285,7 +331,21 @@ function ActivityDetail({ activity }: { activity: CompletedActivity }) {
         <div><dt>Distance</dt><dd>{activity.distance_metres === null ? "Not recorded" : `${activity.distance_metres} m (${activity.distance_metres / 1000} km)`}</dd></div>
       </dl>
       {activity.notes && <div className="notes"><span className="label">Notes</span><p>{activity.notes}</p></div>}
-      <footer><span>Source: manual / Created by athlete entry</span><code>{activity.id}</code></footer>
+      {provenance && <div className="notes"><span className="label">Import provenance</span><dl>
+        <div><dt>Adapter</dt><dd>{provenance.adapter_type}</dd></div>
+        <div><dt>Importer</dt><dd>{provenance.importer_name} {provenance.importer_version}</dd></div>
+        <div><dt>Imported</dt><dd>{provenance.imported_at}</dd></div>
+        <div><dt>Raw source</dt><dd>{provenance.raw_file_identity}</dd></div>
+        <div><dt>SHA-256</dt><dd><code>{provenance.checksum_sha256}</code></dd></div>
+        <div><dt>Source identity</dt><dd><code>{provenance.source_identity}</code></dd></div>
+      </dl></div>}
+      {provenance && <div className="notes"><span className="label">Original normalized values</span><dl>
+        <div><dt>Modality</dt><dd>{provenance.original_normalized_values.modality}</dd></div>
+        <div><dt>Start instant</dt><dd>{provenance.original_normalized_values.start_instant}</dd></div>
+        <div><dt>Duration</dt><dd>{provenance.original_normalized_values.duration_seconds} sec</dd></div>
+        <div><dt>Distance</dt><dd>{provenance.original_normalized_values.distance_metres ?? "Not recorded"} m</dd></div>
+      </dl></div>}
+      <footer><span>{provenance ? "Source: Garmin FIT import" : "Source: manual / Created by athlete entry"}</span><code>{activity.id}</code></footer>
     </article>
   );
 }

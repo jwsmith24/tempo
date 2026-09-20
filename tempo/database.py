@@ -30,6 +30,21 @@ def database_url() -> str:
     return f"sqlite:///{database}"
 
 
+def application_data_directory() -> Path:
+    configured = os.getenv("TEMPO_DATA_DIR")
+    if configured:
+        directory = Path(configured)
+    else:
+        directory = (
+            Path.home() / "Library" / "Application Support" / "Tempo"
+            if sys.platform == "darwin"
+            else Path.home() / ".local" / "share" / "tempo"
+        )
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    directory.chmod(0o700)
+    return directory
+
+
 @event.listens_for(Engine, "connect")
 def configure_sqlite(connection: object, _: object) -> None:
     if not isinstance(connection, sqlite3.Connection):

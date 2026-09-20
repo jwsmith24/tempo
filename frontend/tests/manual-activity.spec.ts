@@ -43,8 +43,9 @@ test("records and revisits unmatched manual training evidence", async ({ page })
   await expect(page.getByText("Unmatched", { exact: true })).toBeVisible();
 
   await page.getByRole("link", { name: "Activities", exact: true }).click();
-  await expect(page.getByRole("link", { name: /Morning progression/ })).toBeVisible();
-  await expect(page.getByText("Unmatched", { exact: true })).toBeVisible();
+  const activityRow = page.getByRole("link", { name: /Morning progression/ });
+  await expect(activityRow).toBeVisible();
+  await expect(activityRow.getByText("Unmatched", { exact: true })).toBeVisible();
 });
 
 test("associates invalid manual activity errors with fields", async ({ page }) => {

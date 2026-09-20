@@ -19,9 +19,16 @@ def database_url(tmp_path: Path) -> str:
 
 
 @pytest.fixture
-def client(database_url: str) -> Generator[TestClient, None, None]:
+def data_directory(tmp_path: Path) -> Path:
+    return tmp_path / "application-data"
+
+
+@pytest.fixture
+def client(database_url: str, data_directory: Path) -> Generator[TestClient, None, None]:
     previous_url = os.environ.get("TEMPO_DATABASE_URL")
+    previous_data_directory = os.environ.get("TEMPO_DATA_DIR")
     os.environ["TEMPO_DATABASE_URL"] = database_url
+    os.environ["TEMPO_DATA_DIR"] = str(data_directory)
     config = Config("alembic.ini")
     command.upgrade(config, "head")
     test_engine = create_engine(database_url)
@@ -39,3 +46,7 @@ def client(database_url: str) -> Generator[TestClient, None, None]:
         os.environ.pop("TEMPO_DATABASE_URL", None)
     else:
         os.environ["TEMPO_DATABASE_URL"] = previous_url
+    if previous_data_directory is None:
+        os.environ.pop("TEMPO_DATA_DIR", None)
+    else:
+        os.environ["TEMPO_DATA_DIR"] = previous_data_directory

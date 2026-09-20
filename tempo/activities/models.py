@@ -1,7 +1,7 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, Index, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
 
 from tempo.database import Base
@@ -52,3 +52,29 @@ class CompletedActivity(Base):
     entry_source: Mapped[str] = mapped_column(String(16), default="manual")
     creation_provenance: Mapped[str] = mapped_column(String(32), default="athlete_entry")
     created_at: Mapped[datetime] = mapped_column(UTCInstant())
+    import_provenance: Mapped["ActivityImportProvenance | None"] = relationship(
+        back_populates="activity", uselist=False
+    )
+
+
+class ActivityImportProvenance(Base):
+    __tablename__ = "activity_import_provenance"
+    __table_args__ = (
+        Index("uq_activity_import_source_identity", "adapter_type", "source_identity", unique=True),
+        Index("uq_activity_import_checksum", "checksum_sha256", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    completed_activity_id: Mapped[str] = mapped_column(
+        ForeignKey("completed_activities.id", ondelete="CASCADE"), unique=True
+    )
+    adapter_type: Mapped[str] = mapped_column(String(32))
+    source_identity: Mapped[str] = mapped_column(String(500))
+    importer_name: Mapped[str] = mapped_column(String(64))
+    importer_version: Mapped[str] = mapped_column(String(32))
+    imported_at: Mapped[datetime] = mapped_column(UTCInstant())
+    raw_file_identity: Mapped[str] = mapped_column(String(80), unique=True)
+    checksum_sha256: Mapped[str] = mapped_column(String(64))
+    original_normalized_values: Mapped[str] = mapped_column(Text)
+
+    activity: Mapped[CompletedActivity] = relationship(back_populates="import_provenance")
