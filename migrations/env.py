@@ -6,6 +6,7 @@ from sqlalchemy import engine_from_config, pool
 from tempo.activities import models as activity_models  # noqa: F401
 from tempo.database import Base, database_url
 from tempo.planning import models  # noqa: F401
+from tempo.reconciliation import models as reconciliation_models  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", database_url())

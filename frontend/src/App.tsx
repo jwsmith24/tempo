@@ -5,6 +5,8 @@ type PlannedRunCreate = components["schemas"]["PlannedRunCreate"];
 type PlannedRun = components["schemas"]["PlannedRunRead"];
 type ManualActivityCreate = components["schemas"]["ManualActivityCreate"];
 type CompletedActivity = components["schemas"]["CompletedActivityRead"];
+type ActivityMatchSuggestion = components["schemas"]["ActivityMatchSuggestionRead"];
+type ReconciliationEvidence = components["schemas"]["ReconciliationEvidenceRead"];
 type ValidationError = components["schemas"]["HTTPValidationError"];
 
 const intentLabels: Record<PlannedRunCreate["training_intent"], string> = {
@@ -42,10 +44,18 @@ function localOffset(): string {
 
 function formatDuration(seconds: number | null): string {
   if (seconds === null) return "Not prescribed";
+  if (seconds === 0) return "0 sec";
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   const remainder = seconds % 60;
   return [hours && `${hours} hr`, minutes && `${minutes} min`, remainder && `${remainder} sec`].filter(Boolean).join(" ");
+}
+
+function formatDifference(value: number | null, unit: "seconds" | "metres"): string {
+  if (value === null) return "Not comparable";
+  const direction = value === 0 ? "On prescription" : value > 0 ? "under prescription" : "over prescription";
+  const amount = unit === "seconds" ? formatDuration(Math.abs(value)) : `${Math.abs(value) / 1000} km`;
+  return value === 0 ? direction : `${amount} ${direction}`;
 }
 
 export function App() {
@@ -53,6 +63,8 @@ export function App() {
   const [run, setRun] = useState<PlannedRun | null>(null);
   const [activity, setActivity] = useState<CompletedActivity | null>(null);
   const [activities, setActivities] = useState<CompletedActivity[]>([]);
+  const [activitySuggestions, setActivitySuggestions] = useState<ActivityMatchSuggestion[]>([]);
+  const [evidence, setEvidence] = useState<ReconciliationEvidence | null>(null);
   const [loading, setLoading] = useState(Boolean(plannedRunId() || activityId() || currentRoute === "activity-list"));
   const [status, setStatus] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -72,8 +84,16 @@ export function App() {
       .then(async (response) => {
         if (!response.ok) throw new Error(runId ? "This Planned Run could not be found." : "Completed Activities could not be loaded.");
         const result = await response.json();
-        if (runId) setRun(result as PlannedRun);
-        else if (completedActivityId) setActivity(result as CompletedActivity);
+        if (runId) {
+          setRun(result as PlannedRun);
+          const evidenceResponse = await fetch(`/api/planned-runs/${runId}/reconciliation`);
+          if (!evidenceResponse.ok) throw new Error("Reconciliation evidence could not be loaded.");
+          setEvidence((await evidenceResponse.json()) as ReconciliationEvidence);
+        }
+        else if (completedActivityId) {
+          setActivity(result as CompletedActivity);
+          await refreshActivitySuggestions(completedActivityId);
+        }
         else setActivities(result as CompletedActivity[]);
       })
       .catch((error: Error) => setStatus(error.message))
@@ -164,7 +184,9 @@ export function App() {
     const created = (await response.json()) as CompletedActivity;
     window.history.pushState({}, "", `/activities/${created.id}`);
     setActivity(created);
-    setStatus("Saved as unmatched training evidence in your local record.");
+    if (await refreshActivitySuggestions(created.id)) {
+      setStatus("Saved as unmatched training evidence. Review any suggested Planned Run match below.");
+    }
   }
 
   async function importActivity(event: FormEvent<HTMLFormElement>) {
@@ -185,7 +207,63 @@ export function App() {
     const imported = (await response.json()) as CompletedActivity;
     window.history.pushState({}, "", `/activities/${imported.id}`);
     setActivity(imported);
-    setStatus("Imported as unmatched training evidence in your local record.");
+    if (await refreshActivitySuggestions(imported.id)) {
+      setStatus("Imported as unmatched training evidence. Review any suggested Planned Run match below.");
+    }
+  }
+
+  async function refreshActivitySuggestions(completedActivityId: string): Promise<boolean> {
+    const response = await fetch(`/api/activities/${completedActivityId}/reconciliation/suggestions`);
+    if (!response.ok) {
+      setStatus("Planned Run suggestions could not be loaded.");
+      return false;
+    }
+    setActivitySuggestions((await response.json()) as ActivityMatchSuggestion[]);
+    return true;
+  }
+
+  async function rejectSuggestion(plannedSessionId: string) {
+    if (!activity) return;
+    const response = await fetch(
+      `/api/planned-runs/${plannedSessionId}/reconciliation/suggestions/${activity.id}/reject`,
+      { method: "POST" },
+    );
+    if (!response.ok) {
+      const result = (await response.json()) as { detail?: string };
+      setStatus(result.detail || "Suggestion could not be rejected.");
+      return;
+    }
+    await refreshActivitySuggestions(activity.id);
+    setStatus("Suggestion rejected. The Planned Session and Completed Activity remain unchanged.");
+  }
+
+  async function confirmSuggestion(event: FormEvent<HTMLFormElement>, plannedSessionId: string) {
+    event.preventDefault();
+    if (!activity) return;
+    setErrors({});
+    const form = new FormData(event.currentTarget);
+    const duration = Number(form.get("allocated_duration_minutes"));
+    const distanceInput = String(form.get("allocated_distance_kilometres"));
+    const body = {
+      allocated_duration_seconds: Math.round(duration * 60),
+      allocated_distance_metres: distanceInput === "" ? null : Math.round(Number(distanceInput) * 1000),
+    };
+    const response = await fetch(
+      `/api/planned-runs/${plannedSessionId}/reconciliation/suggestions/${activity.id}/confirm`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+    );
+    if (!response.ok) {
+      const result = (await response.json()) as { detail?: unknown };
+      const detail = result.detail;
+      const message = typeof detail === "string" ? detail : "Enter a positive allocation within the activity's remaining evidence.";
+      setErrors({ [`allocation-${plannedSessionId}`]: message });
+      setStatus("Reconciliation was not confirmed. Review the allocation.");
+      return;
+    }
+    const refreshedActivityResponse = await fetch(`/api/activities/${activity.id}`);
+    if (refreshedActivityResponse.ok) setActivity((await refreshedActivityResponse.json()) as CompletedActivity);
+    await refreshActivitySuggestions(activity.id);
+    setStatus("Reconciliation confirmed. Session Outcome remains not recorded.");
   }
 
   const showingActivity = currentRoute !== "run" || activity !== null;
@@ -207,7 +285,9 @@ export function App() {
         <h1>{activity ? "Completed Activity" : currentRoute === "activity-list" ? "Observed work." : currentRoute === "activity-new" ? "Record what happened." : currentRoute === "activity-import" ? "Import observed work." : run ? "Planned Run" : "Set the intention."}</h1>
         <p className="lede">
           {activity
-            ? "This is observed training evidence. It remains unmatched until you explicitly reconcile it later."
+            ? activity.reconciliation_status !== "unmatched"
+              ? "This observed training evidence has an explicit confirmed Reconciliation allocation; any remaining evidence stays visible."
+              : "This is observed training evidence. It remains unmatched until you explicitly reconcile it later."
             : currentRoute === "activity-list"
               ? "Manual training evidence remains legitimate whether or not it matches a Planned Session."
               : currentRoute === "activity-new"
@@ -220,7 +300,7 @@ export function App() {
         </p>
       </section>
       <p className="status" role="status" aria-live="polite">{loading ? "Loading local record..." : status}</p>
-      {activity ? <ActivityDetail activity={activity} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : currentRoute === "activity-import" ? <ImportForm onSubmit={importActivity} errors={errors} /> : run ? <RunDetail run={run} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
+      {activity ? <ActivityDetail activity={activity} suggestions={activitySuggestions} errors={errors} onReject={rejectSuggestion} onConfirm={confirmSuggestion} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : currentRoute === "activity-import" ? <ImportForm onSubmit={importActivity} errors={errors} /> : run ? <RunDetail run={run} evidence={evidence} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
     </main>
   );
 }
@@ -309,20 +389,33 @@ function ActivityList({ activities }: { activities: CompletedActivity[] }) {
       {activities.map((activity) => (
         <a href={`/activities/${activity.id}`} key={activity.id}>
           <span><b>{activity.title || `${activity.modality} activity`}</b><small>{new Date(activity.start_instant).toLocaleString()}</small></span>
-          <span className="unmatched">Unmatched</span>
+          <span className={activity.reconciliation_status === "unmatched" ? "unmatched" : "revision"}>{activity.reconciliation_status === "allocated" ? "Reconciled" : activity.reconciliation_status === "partially_allocated" ? "Partly reconciled" : "Unmatched"}</span>
         </a>
       ))}
     </section>
   );
 }
 
-function ActivityDetail({ activity }: { activity: CompletedActivity }) {
+function ActivityDetail({
+  activity,
+  suggestions,
+  errors,
+  onReject,
+  onConfirm,
+}: {
+  activity: CompletedActivity;
+  suggestions: ActivityMatchSuggestion[];
+  errors: Record<string, string>;
+  onReject: (plannedSessionId: string) => void;
+  onConfirm: (event: FormEvent<HTMLFormElement>, plannedSessionId: string) => void;
+}) {
   const provenance = activity.import_provenance;
   return (
+    <>
     <article className="run-detail">
       <div className="detail-heading">
         <div><span className="label">Observed</span><strong>{activity.title || `${activity.modality} activity`}</strong></div>
-        <span className="unmatched">Unmatched</span>
+        <span className={activity.reconciliation_status === "unmatched" ? "unmatched" : "revision"}>{activity.reconciliation_status === "allocated" ? "Reconciled" : activity.reconciliation_status === "partially_allocated" ? "Partly reconciled" : "Unmatched"}</span>
       </div>
       <dl>
         <div><dt>Modality</dt><dd>{activity.modality}</dd></div>
@@ -347,6 +440,30 @@ function ActivityDetail({ activity }: { activity: CompletedActivity }) {
       </dl></div>}
       <footer><span>{provenance ? "Source: Garmin FIT import" : "Source: manual / Created by athlete entry"}</span><code>{activity.id}</code></footer>
     </article>
+    {suggestions.length > 0 ? (
+      <section className="reconciliation-panel" aria-label="Suggested Planned Run matches">
+        <div className="section-heading"><div><span className="pending-badge">Pending suggestion</span><h2>Match this activity to a plan</h2></div><code>{suggestions[0].algorithm_version}</code></div>
+        {suggestions.map((suggestion) => {
+          const plannedRun = suggestion.planned_run;
+          const allocationError = errors[`allocation-${plannedRun.id}`];
+          const errorId = `allocation-error-${plannedRun.id}`;
+          const suggestionLabel = `${intentLabels[plannedRun.training_intent]} on ${plannedRun.scheduled_date}`;
+          return (
+            <form className="suggestion-card" aria-label={`Suggestion for ${suggestionLabel}`} key={plannedRun.id} onSubmit={(event) => onConfirm(event, plannedRun.id)}>
+              <div><strong>{suggestionLabel}</strong><small>{formatDuration(plannedRun.active_revision.duration_seconds)} planned{plannedRun.active_revision.distance_metres === null ? "" : ` / ${plannedRun.active_revision.distance_metres / 1000} km`}</small></div>
+              <ul>{suggestion.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+              <div className="allocation-fields">
+                <label><span>Allocated duration</span><span className="unit-input"><input name="allocated_duration_minutes" type="number" min="0.0167" step="any" required defaultValue={suggestion.proposed_duration_seconds / 60} aria-invalid={Boolean(allocationError)} aria-describedby={allocationError ? errorId : undefined} /><b>min</b></span></label>
+                <label><span>Allocated distance <i>Optional</i></span><span className="unit-input"><input name="allocated_distance_kilometres" type="number" min="0.001" step="any" defaultValue={suggestion.proposed_distance_metres === null ? "" : suggestion.proposed_distance_metres / 1000} aria-invalid={Boolean(allocationError)} aria-describedby={allocationError ? errorId : undefined} /><b>km</b></span></label>
+              </div>
+              {allocationError && <small className="error" id={errorId}>{allocationError}</small>}
+              <div className="suggestion-actions"><button type="button" className="secondary-button" onClick={() => onReject(plannedRun.id)}>Reject suggestion</button><button type="submit">Confirm Reconciliation</button></div>
+            </form>
+          );
+        })}
+      </section>
+    ) : activity.reconciliation_status === "unmatched" ? <p className="empty-state">No compatible Planned Run suggestions.</p> : <p className="outcome-state">This activity has a confirmed Reconciliation. Open its Planned Run to review planned-versus-actual evidence.</p>}
+    </>
   );
 }
 
@@ -401,9 +518,16 @@ function RunForm({
   );
 }
 
-function RunDetail({ run }: { run: PlannedRun }) {
+function RunDetail({
+  run,
+  evidence,
+}: {
+  run: PlannedRun;
+  evidence: ReconciliationEvidence | null;
+}) {
   const revision = run.active_revision;
   return (
+    <>
     <article className="run-detail">
       <div className="detail-heading">
         <div><span className="label">Scheduled</span><strong>{new Date(`${run.scheduled_date}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</strong></div>
@@ -418,5 +542,27 @@ function RunDetail({ run }: { run: PlannedRun }) {
       {run.notes && <div className="notes"><span className="label">Notes</span><p>{run.notes}</p></div>}
       <footer><span>Created by athlete entry</span><code>{run.id}</code></footer>
     </article>
+    {evidence && evidence.allocations.length === 0 && <p className="outcome-state">Session Outcome: not recorded</p>}
+    {evidence && evidence.allocations.length > 0 && (
+      <section className="reconciliation-panel confirmed-panel" aria-label="Confirmed Reconciliation">
+        <div className="section-heading"><div><span className="revision">Confirmed Reconciliation</span><h2>Planned versus actual</h2></div></div>
+        {evidence.allocations.map((item) => (
+          <article className="evidence-card" key={item.allocation.id}>
+            <h3>{item.activity.title || "Running activity"}</h3>
+            <dl>
+              <div><dt>Allocated duration</dt><dd>{formatDuration(item.allocation.allocated_duration_seconds)}</dd></div>
+              <div><dt>Allocated distance</dt><dd>{item.allocation.allocated_distance_metres === null ? "Not allocated" : `${item.allocation.allocated_distance_metres / 1000} km`}</dd></div>
+              <div><dt>Unmatched duration</dt><dd>{formatDuration(item.unmatched_duration_seconds)}</dd></div>
+              <div><dt>Unmatched distance</dt><dd>{item.unmatched_distance_metres === null ? "Not recorded" : `${item.unmatched_distance_metres / 1000} km`}</dd></div>
+              <div><dt>Duration difference</dt><dd>{formatDifference(evidence.duration_difference_seconds, "seconds")}</dd></div>
+              <div><dt>Distance difference</dt><dd>{formatDifference(evidence.distance_difference_metres, "metres")}</dd></div>
+            </dl>
+            <div className="notes"><span className="label">Source provenance</span><p>{item.activity.import_provenance ? `${item.activity.import_provenance.adapter_type} / ${item.activity.import_provenance.importer_name} ${item.activity.import_provenance.importer_version} / imported ${item.activity.import_provenance.imported_at} / raw source ${item.activity.import_provenance.raw_file_identity}` : "Manual athlete entry; no imported raw source."}</p></div>
+          </article>
+        ))}
+        <p className="outcome-state">Session Outcome: not recorded</p>
+      </section>
+    )}
+    </>
   );
 }

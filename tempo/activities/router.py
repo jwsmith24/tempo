@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import json
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from tempo.activities.fit_adapter import FitImportError
@@ -17,7 +17,9 @@ MAX_FIT_BYTES = 32 * 1024 * 1024
 UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
-def activity_response(activity: CompletedActivity) -> CompletedActivityRead:
+def activity_response(
+    activity: CompletedActivity, reconciliation_status: str = "unmatched"
+) -> CompletedActivityRead:
     provenance = activity.import_provenance
     return CompletedActivityRead(
         id=activity.id,
@@ -30,6 +32,7 @@ def activity_response(activity: CompletedActivity) -> CompletedActivityRead:
         entry_source=activity.entry_source,
         creation_provenance=activity.creation_provenance,
         created_at=activity.created_at,
+        reconciliation_status=reconciliation_status,
         import_provenance=(
             ImportProvenanceRead(
                 adapter_type=provenance.adapter_type,
@@ -45,6 +48,20 @@ def activity_response(activity: CompletedActivity) -> CompletedActivityRead:
             else None
         ),
     )
+
+
+def activity_reconciliation_status(session: Session, activity_id: str) -> str:
+    from tempo.reconciliation.models import ReconciliationAllocation
+
+    activity = session.get(CompletedActivity, activity_id)
+    allocated = session.scalar(
+        select(func.coalesce(func.sum(ReconciliationAllocation.allocated_duration_seconds), 0)).where(
+            ReconciliationAllocation.completed_activity_id == activity_id
+        )
+    )
+    if activity is None or not allocated:
+        return "unmatched"
+    return "allocated" if allocated >= activity.duration_seconds else "partially_allocated"
 
 
 @router.post(
@@ -70,7 +87,7 @@ def create_manual_activity(
     session.add(activity)
     session.commit()
     session.refresh(activity)
-    return activity_response(activity)
+    return activity_response(activity, activity_reconciliation_status(session, activity.id))
 
 
 @router.post(
@@ -96,7 +113,7 @@ async def import_fit(
         activity = import_fit_activity(content, session)
     except FitImportError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return activity_response(activity)
+    return activity_response(activity, activity_reconciliation_status(session, activity.id))
 
 
 @router.get("", response_model=list[CompletedActivityRead], response_model_exclude_none=True)
@@ -108,7 +125,10 @@ def list_activities(session: Session = Depends(get_session)) -> list[CompletedAc
         key=lambda activity: (activity.start_instant.timestamp(), activity.id),
         reverse=True,
     )
-    return [activity_response(activity) for activity in sorted_activities]
+    return [
+        activity_response(activity, activity_reconciliation_status(session, activity.id))
+        for activity in sorted_activities
+    ]
 
 
 @router.get("/{activity_id}", response_model=CompletedActivityRead, response_model_exclude_none=True)
@@ -120,4 +140,4 @@ def get_activity(
         raise HTTPException(status_code=404, detail="Completed Activity not found.")
     if activity.import_provenance is not None:
         ensure_raw_files(session)
-    return activity_response(activity)
+    return activity_response(activity, activity_reconciliation_status(session, activity.id))

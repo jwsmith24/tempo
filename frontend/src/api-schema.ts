@@ -90,6 +90,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/planned-runs/{planned_session_id}/reconciliation/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Suggestions */
+        get: operations["get_suggestions_api_planned_runs__planned_session_id__reconciliation_suggestions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/planned-runs/{planned_session_id}/reconciliation/suggestions/{activity_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject Match Suggestion */
+        post: operations["reject_match_suggestion_api_planned_runs__planned_session_id__reconciliation_suggestions__activity_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/planned-runs/{planned_session_id}/reconciliation/suggestions/{activity_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm Match Suggestion */
+        post: operations["confirm_match_suggestion_api_planned_runs__planned_session_id__reconciliation_suggestions__activity_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/planned-runs/{planned_session_id}/reconciliation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Reconciliation Evidence */
+        get: operations["get_reconciliation_evidence_api_planned_runs__planned_session_id__reconciliation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/activities/{activity_id}/reconciliation/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Activity Suggestions */
+        get: operations["get_activity_suggestions_api_activities__activity_id__reconciliation_suggestions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -99,11 +184,54 @@ export interface components {
          * @enum {string}
          */
         ActivityEntrySource: "manual" | "fit_import";
+        /** ActivityMatchSuggestionRead */
+        ActivityMatchSuggestionRead: {
+            /** Activity Id */
+            activity_id: string;
+            planned_run: components["schemas"]["PlannedRunRead"];
+            /** Algorithm Version */
+            algorithm_version: string;
+            /** Reasons */
+            reasons: string[];
+            /** Proposed Duration Seconds */
+            proposed_duration_seconds: number;
+            /** Proposed Distance Metres */
+            proposed_distance_metres: number | null;
+        };
         /**
          * ActivityModality
          * @enum {string}
          */
         ActivityModality: "running" | "cycling" | "strength" | "other";
+        /** AllocationEvidenceRead */
+        AllocationEvidenceRead: {
+            allocation: components["schemas"]["AllocationRead"];
+            activity: components["schemas"]["CompletedActivityRead"];
+            /** Unmatched Duration Seconds */
+            unmatched_duration_seconds: number;
+            /** Unmatched Distance Metres */
+            unmatched_distance_metres: number | null;
+        };
+        /** AllocationRead */
+        AllocationRead: {
+            /** Id */
+            id: string;
+            /** Planned Session Id */
+            planned_session_id: string;
+            /** Completed Activity Id */
+            completed_activity_id: string;
+            /** Allocated Duration Seconds */
+            allocated_duration_seconds: number;
+            /** Allocated Distance Metres */
+            allocated_distance_metres: number | null;
+            /** Confirmation Source */
+            confirmation_source: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /** Body_import_fit_api_activities_imports_fit_post */
         Body_import_fit_api_activities_imports_fit_post: {
             /**
@@ -191,6 +319,22 @@ export interface components {
             /** Notes */
             notes?: string | null;
         };
+        /** MatchSuggestionRead */
+        MatchSuggestionRead: {
+            /** Planned Session Id */
+            planned_session_id: string;
+            /** Prescription Revision Id */
+            prescription_revision_id: string;
+            activity: components["schemas"]["CompletedActivityRead"];
+            /** Algorithm Version */
+            algorithm_version: string;
+            /** Reasons */
+            reasons: string[];
+            /** Proposed Duration Seconds */
+            proposed_duration_seconds: number;
+            /** Proposed Distance Metres */
+            proposed_distance_metres: number | null;
+        };
         /** PlannedRunCreate */
         PlannedRunCreate: {
             /**
@@ -255,6 +399,34 @@ export interface components {
          * @enum {string}
          */
         Priority: "low" | "normal" | "high";
+        /** ReconciliationEvidenceRead */
+        ReconciliationEvidenceRead: {
+            planned_run: components["schemas"]["PlannedRunRead"];
+            /** Allocations */
+            allocations: components["schemas"]["AllocationEvidenceRead"][];
+            /** Allocated Duration Seconds */
+            allocated_duration_seconds: number;
+            /** Allocated Distance Metres */
+            allocated_distance_metres: number | null;
+            /** Duration Difference Seconds */
+            duration_difference_seconds: number | null;
+            /** Distance Difference Metres */
+            distance_difference_metres: number | null;
+            /** Session Outcome */
+            session_outcome?: null;
+        };
+        /** SuggestionConfirm */
+        SuggestionConfirm: {
+            /** Allocated Duration Seconds */
+            allocated_duration_seconds?: number | null;
+            /** Allocated Distance Metres */
+            allocated_distance_metres?: number | null;
+        };
+        /** SuggestionDecisionRead */
+        SuggestionDecisionRead: {
+            /** Decision */
+            decision: string;
+        };
         /**
          * TrainingIntent
          * @enum {string}
@@ -446,6 +618,167 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CompletedActivityRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_suggestions_api_planned_runs__planned_session_id__reconciliation_suggestions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                planned_session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatchSuggestionRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reject_match_suggestion_api_planned_runs__planned_session_id__reconciliation_suggestions__activity_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                planned_session_id: string;
+                activity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestionDecisionRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_match_suggestion_api_planned_runs__planned_session_id__reconciliation_suggestions__activity_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                planned_session_id: string;
+                activity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuggestionConfirm"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AllocationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_reconciliation_evidence_api_planned_runs__planned_session_id__reconciliation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                planned_session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReconciliationEvidenceRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_activity_suggestions_api_activities__activity_id__reconciliation_suggestions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                activity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityMatchSuggestionRead"][];
                 };
             };
             /** @description Validation Error */
