@@ -253,9 +253,12 @@ export function App() {
       setStatus("Linking details could not be loaded.");
       return false;
     }
+    const nextLinking = (await linkingResponse.json()) as ActivityLinking;
     setActivity((await activityResponse.json()) as CompletedActivity);
-    setActivityLinking((await linkingResponse.json()) as ActivityLinking);
+    setActivityLinking(nextLinking);
     setPlannedRuns((await plansResponse.json()) as PlannedRun[]);
+    setEvidence(null);
+    if (nextLinking.link) await refreshEvidence(nextLinking.link.planned_run.id);
     return true;
   }
 
@@ -360,10 +363,11 @@ export function App() {
 
   async function recordOutcome(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!run) return;
+    const plannedSessionId = run?.id ?? activityLinking?.link?.planned_run.id;
+    if (!plannedSessionId) return;
     setErrors({});
     const form = new FormData(event.currentTarget);
-    const response = await fetch(`/api/planned-runs/${run.id}/outcomes`, {
+    const response = await fetch(`/api/planned-runs/${plannedSessionId}/outcomes`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ disposition: form.get("disposition"), reason: String(form.get("reason")) || null }),
@@ -373,19 +377,20 @@ export function App() {
       setStatus("Session Outcome was not recorded.");
       return;
     }
-    if (await refreshEvidence(run.id)) setStatus("Session Outcome recorded. Links remain separate evidence.");
+    if (await refreshEvidence(plannedSessionId)) setStatus("Session Outcome recorded. Links remain separate evidence.");
   }
 
   async function recordCheckIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!run) return;
+    const plannedSessionId = run?.id ?? activityLinking?.link?.planned_run.id;
+    if (!plannedSessionId) return;
     setErrors({});
     const form = new FormData(event.currentTarget);
     const optionalNumber = (name: string) => {
       const value = String(form.get(name));
       return value === "" ? null : Number(value);
     };
-    const response = await fetch(`/api/planned-runs/${run.id}/check-ins`, {
+    const response = await fetch(`/api/planned-runs/${plannedSessionId}/check-ins`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -400,7 +405,7 @@ export function App() {
       setStatus("Check-in was not recorded. Review the highlighted fields.");
       return;
     }
-    if (await refreshEvidence(run.id)) setStatus("Check-in recorded as an athlete-reported observation.");
+    if (await refreshEvidence(plannedSessionId)) setStatus("Check-in recorded as an athlete-reported observation.");
   }
 
   const showingActivity = currentRoute !== "run" || activity !== null;
@@ -439,7 +444,7 @@ export function App() {
         </p>
       </section>
       <p className="mb-[18px] min-h-6 font-mono text-[13px] font-medium" role="status" aria-live="polite">{loading ? "Loading local record..." : status}</p>
-      {activity ? <ActivityDetail activity={activity} linking={activityLinking} plannedRuns={plannedRuns} errors={errors} onConfirm={confirmCandidate} onCreateDirect={createDirectLink} onChange={changeDirectLink} onRemove={removeDirectLink} onResolveLegacy={resolveLegacy} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : currentRoute === "activity-import" ? <ImportForm onSubmit={importActivity} errors={errors} /> : run ? <RunDetail run={run} evidence={evidence} errors={errors} onRecordOutcome={recordOutcome} onRecordCheckIn={recordCheckIn} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
+      {activity ? <ActivityDetail activity={activity} linking={activityLinking} plannedRuns={plannedRuns} evidence={evidence} errors={errors} onConfirm={confirmCandidate} onCreateDirect={createDirectLink} onChange={changeDirectLink} onRemove={removeDirectLink} onResolveLegacy={resolveLegacy} onRecordOutcome={recordOutcome} onRecordCheckIn={recordCheckIn} /> : currentRoute === "activity-list" && !loading ? <ActivityList activities={activities} /> : currentRoute === "activity-new" ? <ActivityForm onSubmit={createActivity} errors={errors} /> : currentRoute === "activity-import" ? <ImportForm onSubmit={importActivity} errors={errors} /> : run ? <RunDetail run={run} evidence={evidence} errors={errors} onRecordOutcome={recordOutcome} onRecordCheckIn={recordCheckIn} /> : !loading && <RunForm onSubmit={createRun} errors={errors} />}
     </main>
   );
 }
@@ -539,22 +544,28 @@ function ActivityDetail({
   activity,
   linking,
   plannedRuns,
+  evidence,
   errors,
   onConfirm,
   onCreateDirect,
   onChange,
   onRemove,
   onResolveLegacy,
+  onRecordOutcome,
+  onRecordCheckIn,
 }: {
   activity: CompletedActivity;
   linking: ActivityLinking | null;
   plannedRuns: PlannedRun[];
+  evidence: LinkEvidence | null;
   errors: Record<string, string>;
   onConfirm: (plannedSessionId: string) => void;
   onCreateDirect: (event: FormEvent<HTMLFormElement>) => void;
   onChange: (event: FormEvent<HTMLFormElement>) => void;
   onRemove: () => void;
   onResolveLegacy: (plannedSessionId: string | null) => void;
+  onRecordOutcome: (event: FormEvent<HTMLFormElement>) => void;
+  onRecordCheckIn: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const provenance = activity.import_provenance;
   return (
@@ -630,7 +641,8 @@ function ActivityDetail({
       {linking.legacy_resolution.records.map((record) => <article className={suggestionCard} key={record.id}><strong>{intentLabels[record.planned_run.training_intent]} on {record.planned_run.scheduled_date}</strong><small>Preserved: {formatDuration(record.linked_duration_seconds)}{record.linked_distance_metres === null ? "" : ` / ${record.linked_distance_metres / 1000} km`}</small><button type="button" onClick={() => onResolveLegacy(record.planned_session_id)}>Use this Planned Run</button></article>)}
       <button type="button" className={secondaryButton} onClick={() => onResolveLegacy(null)}>Resolve with no current Link</button>
     </section>}
-    {linking && !linking.link && linking.candidates.length === 0 && !linking.legacy_resolution ? <p className="border border-line bg-surface p-[38px]">No eligible Planned Runs. This activity remains legitimate unmatched evidence.</p> : linking?.link ? <p className="py-[18px] font-mono text-[13px] font-medium">The complete activity has one Link. Session Outcome remains not recorded.</p> : null}
+    {linking && !linking.link && linking.candidates.length === 0 && !linking.legacy_resolution ? <p className="border border-line bg-surface p-[38px]">No eligible Planned Runs. This activity remains legitimate unmatched evidence.</p> : linking?.link ? <p className="py-[18px] font-mono text-[13px] font-medium">The complete activity has one Link. Record its separate Session Outcome and Check-in below.</p> : null}
+    {linking?.link && evidence?.planned_run.id === linking.link.planned_run.id && <SessionObservations evidence={evidence} errors={errors} onRecordOutcome={onRecordOutcome} onRecordCheckIn={onRecordCheckIn} />}
     </>
   );
 }
@@ -744,6 +756,12 @@ function RunDetail({
 }
 
 function SessionObservations({ evidence, errors, onRecordOutcome, onRecordCheckIn }: { evidence: LinkEvidence; errors: Record<string, string>; onRecordOutcome: (event: FormEvent<HTMLFormElement>) => void; onRecordCheckIn: (event: FormEvent<HTMLFormElement>) => void }) {
+  const describeCheckIn = (checkIn: NonNullable<LinkEvidence["check_in"]>) => [
+    checkIn.readiness !== null && `readiness ${checkIn.readiness}/5`,
+    checkIn.post_session_effort !== null && `effort ${checkIn.post_session_effort}/10`,
+    checkIn.feel !== null && `feel ${checkIn.feel}/5`,
+    checkIn.notes,
+  ].filter(Boolean).join("; ");
   return (
     <section className={linkingPanel} aria-label="Session Outcome and Check-in">
       <div className={sectionHeading}><div><span className={revisionBadge}>Athlete record</span><h2>Outcome and observations</h2></div></div>
@@ -766,10 +784,10 @@ function SessionObservations({ evidence, errors, onRecordOutcome, onRecordCheckI
       </form>
       <dl className="border border-line bg-surface p-[clamp(22px,4vw,34px)]">
         <div><dt>Current Session Outcome</dt><dd>{evidence.session_outcome ? outcomeLabels[evidence.session_outcome.disposition] : "Not recorded"}</dd></div>
-        <div><dt>Current Check-in</dt><dd>{evidence.check_in ? "Recorded" : "Not recorded"}</dd></div>
+        <div><dt>Current Check-in</dt><dd>{evidence.check_in ? describeCheckIn(evidence.check_in) : "Not recorded"}</dd></div>
       </dl>
-      {evidence.session_outcome_history.length > 0 && <p className="font-mono text-xs">Session Outcome history: {evidence.session_outcome_history.map((outcome) => outcomeLabels[outcome.disposition]).join("; ")}</p>}
-      {evidence.check_in_history.length > 0 && <p className="font-mono text-xs">Check-in history: {evidence.check_in_history.length} record{evidence.check_in_history.length === 1 ? "" : "s"}.</p>}
+      {evidence.session_outcome_history.length > 0 && <p className="font-mono text-xs">Session Outcome history: {evidence.session_outcome_history.map((outcome) => `${outcomeLabels[outcome.disposition]}${outcome.reason ? ` (${outcome.reason})` : ""}`).join("; ")}</p>}
+      {evidence.check_in_history.length > 0 && <p className="font-mono text-xs">Check-in history: {evidence.check_in_history.map(describeCheckIn).join(" | ")}</p>}
     </section>
   );
 }

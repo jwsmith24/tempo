@@ -31,7 +31,23 @@ test("automatically links the only eligible plan using complete evidence", async
   const ownership = page.getByRole("region", { name: "Confirmed Links" });
   await expect(ownership.getByText("automatic / complete activity")).toBeVisible();
   await expect(ownership.getByText("The activity has no current Link.")).toBeVisible();
-  await expect(page.getByText("Session Outcome remains not recorded.")).toBeVisible();
+  const outcome = page.getByRole("form", { name: "Record Session Outcome" });
+  await outcome.getByLabel("Session Outcome").selectOption("completed");
+  await outcome.getByRole("button", { name: "Record Session Outcome" }).press("Enter");
+  await expect(page.getByRole("status")).toContainText("Session Outcome recorded");
+  await expect(page.getByRole("definition").filter({ hasText: "Completed" })).toBeVisible();
+  await outcome.getByLabel("Session Outcome").selectOption("modified");
+  await outcome.getByRole("button", { name: "Record Session Outcome" }).press("Enter");
+  await expect(page.getByText("Session Outcome history: Completed; Modified")).toBeVisible();
+
+  const checkIn = page.getByRole("form", { name: "Record Check-in" });
+  await checkIn.getByRole("button", { name: "Record Check-in" }).press("Enter");
+  await expect(checkIn.getByLabel("Post-session effort")).toHaveAttribute("aria-invalid", "true");
+  await expect(checkIn.getByLabel("Post-session effort")).toHaveAttribute("aria-describedby", "check-in-error");
+  await expect(checkIn.locator("#check-in-error")).toBeVisible();
+  await checkIn.getByLabel("Post-session effort").fill("7");
+  await checkIn.getByRole("button", { name: "Record Check-in" }).press("Enter");
+  await expect(page.getByText("Check-in history: effort 7/10")).toBeVisible();
 
   await page.goto(runUrl);
   const evidence = page.getByRole("region", { name: "Confirmed Links" });
@@ -40,6 +56,9 @@ test("automatically links the only eligible plan using complete evidence", async
   await expect(evidence.getByLabel("Complete actual totals").getByText("9 km")).toBeVisible();
   await expect(evidence.getByLabel("Complete actual totals").getByText("5 min under prescription")).toBeVisible();
   await expect(evidence.getByLabel("Complete actual totals").getByText("1 km under prescription")).toBeVisible();
+  await expect(page.getByRole("definition").filter({ hasText: "Modified" })).toBeVisible();
+  await expect(page.getByText("Session Outcome history: Completed; Modified")).toBeVisible();
+  await expect(page.getByText("Check-in history: effort 7/10")).toBeVisible();
 });
 
 test("requires explicit selection for multiple candidates", async ({ page }) => {
@@ -58,6 +77,14 @@ test("requires explicit selection for multiple candidates", async ({ page }) => 
   await expect(page.getByRole("status")).toContainText("Link confirmed");
   await expect(page.getByText("athlete confirmed / complete activity")).toBeVisible();
   await expect(candidates).toHaveCount(0);
+  const outcome = page.getByRole("form", { name: "Record Session Outcome" });
+  await outcome.getByLabel("Session Outcome").selectOption("modified");
+  await outcome.getByRole("button", { name: "Record Session Outcome" }).press("Enter");
+  const checkIn = page.getByRole("form", { name: "Record Check-in" });
+  await checkIn.getByLabel("Feel").fill("4");
+  await checkIn.getByRole("button", { name: "Record Check-in" }).press("Enter");
+  await expect(page.getByText("Session Outcome history: Modified")).toBeVisible();
+  await expect(page.getByText("Check-in history: feel 4/5")).toBeVisible();
 });
 
 test("creates changes and removes a direct whole-activity Link", async ({ page }) => {
@@ -66,21 +93,35 @@ test("creates changes and removes a direct whole-activity Link", async ({ page }
   await createActivity(page, "2026-10-20", "Direct whole Link");
 
   await expect(page.getByText(/legitimate unmatched evidence/)).toBeVisible();
+  await expect(page.getByRole("form", { name: "Record Session Outcome" })).toHaveCount(0);
   const direct = page.getByRole("form", { name: "Create direct Link" });
   await direct.getByLabel("Planned Run").selectOption({ label: "Aerobic base on 2026-10-10" });
   await direct.getByRole("button", { name: "Link complete activity" }).press("Enter");
   await expect(page.getByRole("status")).toContainText("Direct Link created");
+  await expect(page.getByRole("form", { name: "Record Session Outcome" })).toBeVisible();
+  const outcome = page.getByRole("form", { name: "Record Session Outcome" });
+  await outcome.getByLabel("Session Outcome").selectOption("completed");
+  await outcome.getByRole("button", { name: "Record Session Outcome" }).press("Enter");
+  const checkIn = page.getByRole("form", { name: "Record Check-in" });
+  await checkIn.getByLabel("Readiness").fill("2");
+  await checkIn.getByRole("button", { name: "Record Check-in" }).press("Enter");
+  await expect(page.getByText("Session Outcome history: Completed")).toBeVisible();
+  await expect(page.getByText("Check-in history: readiness 2/5")).toBeVisible();
 
   const change = page.getByRole("form", { name: "Change current Link" });
   await change.getByLabel("Move to Planned Run").selectOption({ label: "Aerobic base on 2026-10-12" });
   await change.getByRole("button", { name: "Change Link" }).press("Enter");
   await expect(page.getByRole("status")).toContainText("Link changed");
   await expect(change.locator("strong")).toHaveText("Aerobic base on 2026-10-12");
+  await expect(page.getByRole("definition").filter({ hasText: "Not recorded" }).first()).toBeVisible();
+  await expect(page.getByText("Session Outcome history: Completed")).toHaveCount(0);
+  await expect(page.getByText("Check-in history: readiness 2/5")).toHaveCount(0);
 
   await change.getByRole("button", { name: "Remove Link" }).press("Enter");
   await expect(page.getByRole("status")).toContainText("Link removed");
   await expect(page.getByText("Unmatched", { exact: true })).toBeVisible();
   await expect(page.getByRole("form", { name: "Create direct Link" })).toBeVisible();
+  await expect(page.getByRole("form", { name: "Record Session Outcome" })).toHaveCount(0);
 });
 
 test("resolves preserved legacy Links without hiding their history", async ({ page }) => {
@@ -126,10 +167,10 @@ test("records append-only Session Outcome and Check-in without a Link", async ({
   await checkIn.getByLabel("Readiness").fill("3");
   await checkIn.getByRole("button", { name: "Record Check-in" }).press("Enter");
   await expect(page.getByRole("status")).toContainText("Check-in recorded");
-  await expect(page.getByText("Check-in history: 1 record.")).toBeVisible();
+  await expect(page.getByText("Check-in history: readiness 3/5")).toBeVisible();
 
   await page.reload();
   await expect(page).toHaveURL(runUrl);
   await expect(page.getByRole("definition").filter({ hasText: "Rescheduled" })).toBeVisible();
-  await expect(page.getByText("Check-in history: 1 record.")).toBeVisible();
+  await expect(page.getByText("Check-in history: readiness 3/5")).toBeVisible();
 });
