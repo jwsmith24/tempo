@@ -26,7 +26,7 @@ The daily loop is:
 1. Review today's Planned Sessions, readiness context, and trajectory.
 2. Train using existing devices or workflows.
 3. Import Completed Activities or enter them manually.
-4. Review match suggestions and confirm Links between planned and completed work.
+4. Review automatic Links, resolve ambiguous matches, and correct or remove Links when needed.
 5. Record Session Outcomes, a tiny check-in, and any corrections.
 6. Review findings and explicitly accept, decline, or ignore no Recommendation.
 
@@ -58,7 +58,9 @@ Required views are day, week, and block.
 
 The calendar supports creating, editing, rescheduling, and linking individual Planned Sessions. Every prescription or schedule change preserves revisions, rationale, and the active revision at execution time.
 
-Links are many-to-many so split recordings and combined sessions can be represented explicitly. An unmatched Completed Activity remains legitimate unplanned training evidence.
+Each Completed Activity may Link wholly to at most one Planned Session, while one Planned Session may receive multiple Completed Activities when a session is split across recordings. Multi-modal training uses separate Planned Sessions and separate Completed Activities rather than dividing one combined activity across plans. An unmatched Completed Activity remains legitimate unplanned training evidence.
+
+Immediately after manual creation or FIT import, deterministic matching evaluates eligible Planned Sessions. Exactly one eligible candidate creates the Link automatically; multiple candidates require athlete selection and confirmation without creating a Link; zero candidates leave the activity unmatched. The athlete may change or remove a Link. Linking remains independent of Session Outcome and never claims completion.
 
 Session Outcomes distinguish:
 
@@ -142,7 +144,7 @@ The UI is keyboard operable, does not encode state by color alone, provides read
 
 ### Stage 1: Linking
 
-Enter one Planned Run, import its FIT activity, suggest a match and confirm a Link, record its Session Outcome and check-in, and show planned-versus-actual evidence.
+Enter one Planned Run, import its FIT activity, deterministically Link the whole activity when exactly one plan is eligible or ask the athlete to resolve ambiguity, record its separate Session Outcome and check-in, and show planned-versus-actual evidence.
 
 Also support manual Completed Activity entry, idempotent import, provenance, corrections, and basic export.
 
@@ -169,7 +171,7 @@ Critical correctness checks include:
 - repeated imports do not duplicate activities;
 - corrections never destroy imported source values;
 - reschedules and accepted recommendations preserve prior prescriptions;
-- split and combined recordings link without fabrication;
+- split recordings link as multiple whole Completed Activities to one Planned Session, while multi-modal work remains separate activities and plans without fabrication;
 - justified skips remain visible as deviations;
 - analysis can be rebuilt reproducibly;
 - missing evidence causes qualified output or abstention;

@@ -39,7 +39,7 @@ Observed training evidence imported from a source or entered manually. It may be
 _Avoid_: Planned Session, workout
 
 **Link**:
-An explicit many-to-many connection between Planned Sessions and Completed Activities, including the linked duration and optional linked distance attributed to that connection.
+An explicit whole-activity connection from one Completed Activity to at most one Planned Session. A Planned Session may have Links from multiple Completed Activities when training is split across recordings.
 _Avoid_: Reconciliation, date match, automatic completion
 
 **Session Outcome**:
