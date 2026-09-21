@@ -31,6 +31,7 @@ def test_create_retrieve_and_list_unmatched_manual_activity(
         "creation_provenance": "athlete_entry",
         "created_at": created["created_at"],
         "link_status": "unmatched",
+        "import_provenance": None,
         "original_values": {
             "start_instant": valid_activity()["start_instant"],
             "modality": "running",
@@ -58,6 +59,21 @@ def test_create_retrieve_and_list_unmatched_manual_activity(
         assert "vendor_identity" not in columns
         assert "raw_file_identity" not in columns
         assert "planned_session_id" not in columns
+
+
+def test_optional_activity_values_are_explicitly_null_in_api_contract(client: TestClient) -> None:
+    request = valid_activity()
+    request.pop("distance_metres")
+    request.pop("title")
+    request.pop("notes")
+
+    created = client.post("/api/activities", json=request).json()
+
+    assert created["distance_metres"] is None
+    assert created["title"] is None
+    assert created["notes"] is None
+    assert created["import_provenance"] is None
+    assert created["original_values"]["distance_metres"] is None
 
 
 def test_activity_list_orders_actual_instants_newest_first(client: TestClient) -> None:

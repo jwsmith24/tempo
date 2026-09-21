@@ -7,7 +7,7 @@
     "build": "npm run generate:api && tsc -b && vite build",
     "generate:api": "../.venv/bin/python ../scripts/export_openapi.py && openapi-typescript ../openapi.json -o src/api-schema.ts",
     "tempo": "npm run build && ../.venv/bin/alembic -c ../alembic.ini upgrade head && ../.venv/bin/uvicorn tempo.main:app --host 127.0.0.1 --port 8000",
-    "test": "playwright test tests/planned-run.spec.ts && playwright test tests/manual-activity.spec.ts && playwright test tests/fit-import.spec.ts && playwright test tests/linking.spec.ts && playwright test tests/local-boundary.spec.ts"
+    "test": "playwright test tests/planned-run.spec.ts && playwright test tests/manual-activity.spec.ts && playwright test tests/fit-import.spec.ts && playwright test tests/linking.spec.ts && playwright test tests/records.spec.ts && playwright test tests/local-boundary.spec.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "4.3.4",

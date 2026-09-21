@@ -45,6 +45,18 @@ def correct(client: TestClient, activity_id: str, field: str, value: object, rea
     )
 
 
+def edit(client: TestClient, activity_id: str, changes: list[tuple[str, object]], reason: str = "Fix activity"):
+    return client.post(
+        f"/api/activities/{activity_id}/corrections/batch",
+        json={
+            "changes": [
+                {"field_name": field, "replacement_value": value} for field, value in changes
+            ],
+            "reason": reason,
+        },
+    )
+
+
 def test_correction_chain_preserves_original_and_updates_effective_values(
     client: TestClient, database_url: str
 ) -> None:
@@ -133,3 +145,62 @@ def test_candidate_confirmation_revalidates_after_correction(client: TestClient)
 
     assert response.status_code == 409
     assert response.json()["detail"] == "These records are no longer eligible for this match candidate."
+
+
+def test_multi_field_edit_is_atomic_reasoned_and_preserves_existing_link(
+    client: TestClient, database_url: str
+) -> None:
+    run = create_run(client, "2026-09-20")
+    activity = create_activity(client)
+    before = client.get(f"/api/activities/{activity['id']}/linking").json()["link"]["link"]
+
+    response = edit(
+        client,
+        activity["id"],
+        [("duration_seconds", 2700), ("distance_metres", 7500), ("title", "Evening run")],
+        "Watch included the warm-up",
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert (result["duration_seconds"], result["distance_metres"], result["title"]) == (
+        2700,
+        7500,
+        "Evening run",
+    )
+    assert result["original_values"]["title"] == "Morning run"
+    assert [item["reason"] for item in result["corrections"]] == [
+        "Watch included the warm-up"
+    ] * 3
+    after = client.get(f"/api/activities/{activity['id']}/linking").json()["link"]["link"]
+    assert after["id"] == before["id"]
+    assert after["planned_session_id"] == run["id"]
+
+    invalid = edit(
+        client,
+        activity["id"],
+        [("duration_seconds", 2400), ("modality", "jogging")],
+    )
+    assert invalid.status_code == 422
+    unchanged = client.get(f"/api/activities/{activity['id']}").json()
+    assert unchanged["duration_seconds"] == 2700
+    with Session(create_engine(database_url)) as session:
+        assert session.scalar(select(func.count()).select_from(Correction)) == 3
+
+
+def test_unchanged_batch_edit_creates_no_correction_or_match_evaluation(
+    client: TestClient, database_url: str
+) -> None:
+    activity = create_activity(client, start_instant="2026-10-20T08:00:00+00:00")
+
+    response = edit(
+        client,
+        activity["id"],
+        [("duration_seconds", 3000), ("distance_metres", 8000), ("title", "Morning run")],
+    )
+
+    assert response.status_code == 200
+    assert response.json()["corrections"] == []
+    with Session(create_engine(database_url)) as session:
+        assert session.scalar(select(func.count()).select_from(Correction)) == 0
+        assert session.scalar(select(func.count()).select_from(MatchEvaluation)) == 1

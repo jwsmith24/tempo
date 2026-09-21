@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from tempo.measurements import MAX_DISTANCE_METRES, MAX_DURATION_SECONDS
 
@@ -65,6 +65,33 @@ class CorrectionCreate(BaseModel):
         if not value:
             raise ValueError("Reason must not be blank.")
         return value
+
+
+class ActivityEditChange(BaseModel):
+    field_name: str = Field(
+        pattern="^(start_instant|modality|duration_seconds|distance_metres|title|notes)$"
+    )
+    replacement_value: str | int | None
+
+
+class ActivityEditCreate(BaseModel):
+    changes: list[ActivityEditChange] = Field(min_length=1, max_length=6)
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("reason")
+    @classmethod
+    def reason_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Reason must not be blank.")
+        return value
+
+    @model_validator(mode="after")
+    def fields_must_be_unique(self) -> "ActivityEditCreate":
+        fields = [change.field_name for change in self.changes]
+        if len(fields) != len(set(fields)):
+            raise ValueError("Each activity field may be changed at most once per edit.")
+        return self
 
 
 class CorrectionRead(BaseModel):

@@ -108,6 +108,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/activities/{activity_id}/corrections/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Edit Activity */
+        post: operations["edit_activity_api_activities__activity_id__corrections_batch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/planned-runs/{planned_session_id}/outcomes": {
         parameters: {
             query?: never;
@@ -250,6 +267,20 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActivityEditChange */
+        ActivityEditChange: {
+            /** Field Name */
+            field_name: string;
+            /** Replacement Value */
+            replacement_value: string | number | null;
+        };
+        /** ActivityEditCreate */
+        ActivityEditCreate: {
+            /** Changes */
+            changes: components["schemas"]["ActivityEditChange"][];
+            /** Reason */
+            reason: string;
+        };
         /**
          * ActivityEntrySource
          * @enum {string}
@@ -878,6 +909,41 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompletedActivityRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_activity_api_activities__activity_id__corrections_batch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                activity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActivityEditCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

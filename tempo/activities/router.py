@@ -17,6 +17,7 @@ from tempo.activities.corrections import (
 from tempo.activities.import_service import ensure_raw_files, import_fit_activity
 from tempo.activities.models import CompletedActivity, Correction
 from tempo.activities.schemas import (
+    ActivityEditCreate,
     CompletedActivityRead,
     CorrectionCreate,
     CorrectionRead,
@@ -98,7 +99,6 @@ def activity_link_status(session: Session, activity_id: str) -> str:
 @router.post(
     "",
     response_model=CompletedActivityRead,
-    response_model_exclude_none=True,
     status_code=status.HTTP_201_CREATED,
 )
 def create_manual_activity(
@@ -128,7 +128,6 @@ def create_manual_activity(
 @router.post(
     "/imports/fit",
     response_model=CompletedActivityRead,
-    response_model_exclude_none=True,
     status_code=status.HTTP_201_CREATED,
 )
 async def import_fit(
@@ -151,7 +150,7 @@ async def import_fit(
     return activity_response(session, activity, activity_link_status(session, activity.id))
 
 
-@router.get("", response_model=list[CompletedActivityRead], response_model_exclude_none=True)
+@router.get("", response_model=list[CompletedActivityRead])
 def list_activities(session: Session = Depends(get_session)) -> list[CompletedActivityRead]:
     ensure_raw_files(session)
     activities = list(session.scalars(select(CompletedActivity)))
@@ -166,7 +165,7 @@ def list_activities(session: Session = Depends(get_session)) -> list[CompletedAc
     ]
 
 
-@router.get("/{activity_id}", response_model=CompletedActivityRead, response_model_exclude_none=True)
+@router.get("/{activity_id}", response_model=CompletedActivityRead)
 def get_activity(
     activity_id: str, session: Session = Depends(get_session)
 ) -> CompletedActivityRead:
@@ -258,4 +257,62 @@ def create_correction(
         evaluate_after_ingestion(session, activity)
     session.commit()
     session.refresh(activity)
+    return activity_response(session, activity, activity_link_status(session, activity.id))
+
+
+@router.post(
+    "/{activity_id}/corrections/batch",
+    response_model=CompletedActivityRead,
+)
+def edit_activity(
+    activity_id: str, request: ActivityEditCreate, session: Session = Depends(get_session)
+) -> CompletedActivityRead:
+    session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    activity = session.get(CompletedActivity, activity_id)
+    if activity is None:
+        raise HTTPException(status_code=404, detail="Completed Activity not found.")
+    corrections = list_corrections(session, activity.id)
+    effective = effective_activity(session, activity, corrections)
+    replacements = [
+        (
+            change.field_name,
+            getattr(effective, change.field_name),
+            validate_replacement(
+                activity,
+                CorrectionCreate(
+                    field_name=change.field_name,
+                    replacement_value=change.replacement_value,
+                    reason=request.reason,
+                ),
+            ),
+        )
+        for change in request.changes
+    ]
+    recorded_at = datetime.now(UTC)
+    changed_replacements = [
+        item
+        for item in replacements
+        if serialize_value(item[1]) != serialize_value(item[2])
+    ]
+    for field_name, source_value, replacement in changed_replacements:
+        session.add(
+            Correction(
+                completed_activity_id=activity.id,
+                field_name=field_name,
+                source_value=serialize_value(source_value),
+                replacement_value=serialize_value(replacement),
+                reason=request.reason,
+                recorded_at=recorded_at,
+            )
+        )
+    session.flush()
+    if changed_replacements:
+        if activity_link_status(session, activity.id) == "unmatched":
+            from tempo.linking.service import evaluate_after_ingestion
+
+            evaluate_after_ingestion(session, activity)
+        session.commit()
+        session.refresh(activity)
+    else:
+        session.rollback()
     return activity_response(session, activity, activity_link_status(session, activity.id))

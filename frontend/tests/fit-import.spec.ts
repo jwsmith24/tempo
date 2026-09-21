@@ -14,18 +14,36 @@ test("imports and revisits unmatched Garmin FIT evidence", async ({ page }) => {
   await page.getByRole("button", { name: /Import FIT Activity/ }).click();
 
   await expect(page.getByRole("status")).toContainText("Matching evaluated");
-  await expect(page.getByText("Source: Garmin FIT import")).toBeVisible();
+  const card = page.getByRole("article", { name: "Activity summary" });
+  await expect(card.getByText("FIT import", { exact: true })).toBeVisible();
+  await expect(card.getByText("57 sec", { exact: true })).toBeVisible();
+  await expect(page.getByText("fitdecode 0.11.0")).toBeHidden();
+  await expect(page.getByText("sha256/", { exact: false })).toBeHidden();
+  await page.getByText("Source details").click();
+  await expect(page.getByText("retained Garmin FIT source")).toBeVisible();
   await expect(page.getByText("fitdecode 0.11.0")).toBeVisible();
+  await expect(page.getByText("garmin_fit")).toBeVisible();
+  await expect(page.getByText("Source identity")).toBeVisible();
   await expect(page.getByText("sha256/", { exact: false })).toBeVisible();
-  const originals = page.getByText("Original normalized values").locator("..");
-  await expect(originals).toBeVisible();
-  await expect(originals.getByText("57 sec")).toBeVisible();
-  await expect(page.getByText("Unmatched", { exact: true })).toBeVisible();
+  await expect(page.getByText("Source checksum")).toBeVisible();
+  await expect(page.getByText("Original imported values")).toBeVisible();
+  await expect(page.getByText("57 sec", { exact: true })).toHaveCount(2);
+
+  await page.getByRole("button", { name: "Edit activity" }).click();
+  const edit = page.getByRole("form", { name: "Edit activity" });
+  await edit.getByLabel("Duration").fill("1.25");
+  await edit.getByLabel("Reason for changes").fill("Corrected device elapsed time");
+  await edit.getByRole("button", { name: "Save changes" }).click();
+  await expect(card.getByText("1 min 15 sec", { exact: true })).toBeVisible();
+  await page.getByText("View changes").click();
+  await expect(page.getByLabel("Correction history")).toContainText("57 sec → 1 min 15 sec");
+  await expect(page.getByText("fitdecode 0.11.0")).toBeVisible();
+  await expect(page.getByLabel("Link state")).toContainText("Unmatched unplanned activity");
   await expect(page).toHaveURL(/\/activities\/[a-f0-9-]+$/);
 
   await page.reload();
-  await expect(page.getByText("Source: Garmin FIT import")).toBeVisible();
-  await expect(page.getByText("Unmatched", { exact: true })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Activity summary" }).getByText("FIT import", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Link state")).toContainText("Unmatched unplanned activity");
 });
 
 test("shows an actionable FIT import error", async ({ page }) => {
@@ -43,8 +61,8 @@ test("shows an actionable FIT import error", async ({ page }) => {
 });
 
 test("requests a portable Stage 1 export", async ({ page }) => {
-  await page.goto("/");
-  const button = page.getByRole("button", { name: "Export Stage 1 Record" });
+  await page.goto("/records");
+  const button = page.getByRole("button", { name: "Export my data" });
   await button.focus();
   await expect(button).toBeFocused();
   const [download] = await Promise.all([
